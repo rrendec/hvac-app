@@ -6,17 +6,18 @@
 
 #define prerr(...) fprintf(stderr, __VA_ARGS__)
 
-#define __xassert(cond, fallback, msg, ...)					\
-	do {									\
-		if (!(cond)) {							\
-			prerr("Assertion '%s' failed in %s() [%s:%d]" msg "\n", \
-				#cond, __func__, __FILE__, __LINE__,		\
-				##__VA_ARGS__);					\
-			fallback;						\
-		}								\
-	} while (0)
+#define first_arg(arg, ...) arg
+#define shift_arg(arg, ...) __VA_OPT__(,) __VA_ARGS__
 
-#define xassert(cond, fallback, msg...) __xassert(cond, fallback, msg)
+#define xassert(condition, fallback, ...) do {					\
+	if (!(condition)) {							\
+		prerr("Assertion '%s' failed in %s() [%s:%d]"			\
+			__VA_OPT__(": " first_arg(__VA_ARGS__)) "\n",		\
+			#condition, __func__, __FILE__, __LINE__		\
+			__VA_OPT__(shift_arg(__VA_ARGS__)));			\
+		fallback;							\
+	}									\
+} while (0)
 
 struct sensor_data {
 	// AQ-N-LCD
