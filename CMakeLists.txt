@@ -6,4 +6,4 @@ add_compile_options(-Wall -Werror)
 
 add_executable(hvac src/main.c)
 
-target_link_libraries(hvac modbus)
+target_link_libraries(hvac gpiod modbus)

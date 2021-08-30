@@ -2,9 +2,23 @@
 #include <errno.h>
 #include <assert.h>
 #include <unistd.h>
+#include <gpiod.h>
+#include <time.h>
+#include <signal.h>
+#include <sys/time.h>
 #include <modbus/modbus.h>
 
-#define prerr(...) fprintf(stderr, __VA_ARGS__)
+enum {
+	MODE_HEAT,
+	MODE_COOL,
+} mode = MODE_COOL;
+
+int thres = 5; // 0.5 C
+
+#define prerr(...) do {								\
+	fprintf(stderr, __VA_ARGS__);						\
+	fflush(stderr);								\
+} while (0)
 
 #define first_arg(arg, ...) arg
 #define shift_arg(arg, ...) __VA_OPT__(,) __VA_ARGS__
@@ -31,10 +45,24 @@ struct sensor_data {
 	int hum2;
 };
 
+enum gpio_pins {
+	GPIO_FURNACE_BLOW,
+	GPIO_FURNACE_HEAT,
+	GPIO_FURNACE_COOL,
+	NUM_GPIO_PINS
+};
+
+unsigned int gpio_pin_map[NUM_GPIO_PINS] = {
+	[GPIO_FURNACE_BLOW] = 17, // GPIO_GEN0
+	[GPIO_FURNACE_HEAT] = 18, // GPIO_GEN1
+	[GPIO_FURNACE_COOL] = 27, // GPIO_GEN2
+};
+
+volatile int keep_going = 1;
+
 int sensor_read(modbus_t *mb, struct sensor_data *data)
 {
 	uint16_t reg[2];
-	struct sensor_data tmp;
 	int rc;
 
 	// Note: Delay required between consecutive Modbus transactions with
@@ -48,19 +76,19 @@ int sensor_read(modbus_t *mb, struct sensor_data *data)
 	usleep(10000);
 	rc = modbus_read_registers(mb, 136, 2, reg);
 	xassert(rc != -1, return errno, "%d", errno);
-	tmp.temp1 = reg[0];
-	tmp.hum1 = reg[1];
+	data->temp1 = reg[0];
+	data->hum1 = reg[1];
 
 	usleep(10000);
 	rc = modbus_read_registers(mb, 184, 1, reg);
 	xassert(rc != -1, return errno, "%d", errno);
-	tmp.aq = reg[0];
+	data->aq = reg[0];
 
 	usleep(10000);
 	rc = modbus_read_registers(mb, 167, 2, reg);
 	xassert(rc != -1, return errno, "%d", errno);
-	tmp.temp_sp = reg[0];
-	tmp.hum_sp = reg[1];
+	data->temp_sp = reg[0];
+	data->hum_sp = reg[1];
 
 	rc = modbus_set_slave(mb, 2);
 	xassert(!rc, return errno, "%d", errno);
@@ -68,10 +96,9 @@ int sensor_read(modbus_t *mb, struct sensor_data *data)
 	usleep(10000);
 	rc = modbus_read_registers(mb, 34, 2, reg);
 	xassert(rc != -1, return errno, "%d", errno);
-	tmp.temp2 = reg[0] + 9; // FIXME: hard-coded calibration
-	tmp.hum2 = reg[1] - 44; // FIXME: hard-coded calibration
+	data->temp2 = reg[0] + 9; // FIXME: hard-coded calibration
+	data->hum2 = reg[1] - 44; // FIXME: hard-coded calibration
 
-	*data = tmp;
 	return 0;
 }
 
@@ -85,14 +112,40 @@ void sensor_print(const struct sensor_data *data)
 	putchar('\n');
 	printf("Temp SP\t%.01f\n", data->temp_sp / 10.0);
 	printf("Hum SP\t%.01f\n", data->hum_sp / 10.0);
-	fflush(stdout);
+}
+
+void sig_hdlr(int signal)
+{
+	keep_going = 0;
 }
 
 int main(void)
 {
+	static const struct sigaction act = {.sa_handler = sig_hdlr};
+
+	struct gpiod_chip *chip;
+	struct gpiod_line_bulk bulk;
 	modbus_t *mb;
-	int rc;
+	int i, rc;
 	struct sensor_data sd;
+	enum {STATE_OFF, STATE_ON} state = STATE_OFF;
+
+	sigaction(SIGINT, &act, NULL);
+	sigaction(SIGQUIT, &act, NULL);
+	sigaction(SIGTERM, &act, NULL);
+	signal(SIGUSR1, SIG_IGN);
+	signal(SIGUSR2, SIG_IGN);
+
+	chip = gpiod_chip_open_by_name("gpiochip0");
+	assert(chip);
+
+	rc = gpiod_chip_get_lines(chip, gpio_pin_map, NUM_GPIO_PINS, &bulk);
+	assert(!rc);
+
+	for (i = 0; i < NUM_GPIO_PINS; i++) {
+		rc = gpiod_line_request_output(bulk.lines[i], "hvac", 1);
+		assert(!rc);
+	}
 
 	mb = modbus_new_rtu("/dev/ttyUSB0", 115200, 'N', 8, 1);
 	assert(mb);
@@ -100,12 +153,77 @@ int main(void)
 	rc = modbus_connect(mb);
 	assert(!rc);
 
-	rc = sensor_read(mb, &sd);
-	if (!rc)
+	// Blower on
+	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
+
+	// In case blower was off, give it time to get to nominal speed
+	sleep(2);
+
+	while (keep_going) {
+		struct timeval tv;
+		struct tm *tm;
+		int temp;
+
+		gettimeofday(&tv, NULL);
+		tm = localtime(&tv.tv_sec);
+		printf("\n\n%s\n", asctime(tm));
+		fflush(stdout);
+
+		rc = sensor_read(mb, &sd);
+		if (rc) {
+			sleep(1);
+			continue;
+		}
+
+		temp = (sd.temp1 + 3 * sd.temp2) / 4;
+
 		sensor_print(&sd);
+		fflush(stdout);
+
+		switch (mode) {
+		case MODE_HEAT:
+			if (temp > sd.temp_sp + thres && state == STATE_ON) {
+				printf("\n* HEAT OFF\n");
+				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
+				state = STATE_OFF;
+				break;
+			}
+			if (temp < sd.temp_sp - thres && state == STATE_OFF) {
+				printf("\n* HEAT ON\n");
+				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 0);
+				state = STATE_ON;
+			}
+			break;
+		case MODE_COOL:
+			if (temp > sd.temp_sp + thres && state == STATE_OFF) {
+				printf("\n* COOL ON\n");
+				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
+				state = STATE_ON;
+				break;
+			}
+			if (temp < sd.temp_sp - thres && state == STATE_ON) {
+				printf("\n* COOL OFF\n");
+				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
+				state = STATE_OFF;
+			}
+			break;
+		}
+
+		fflush(stdout);
+		sleep(5);
+	}
+
+	printf("\nShutting down...\n");
+	fflush(stdout);
 
 	modbus_close(mb);
 	modbus_free(mb);
+
+	for (i = 0; i < NUM_GPIO_PINS; i++)
+		gpiod_line_set_value(bulk.lines[i], 1);
+
+	gpiod_line_release_bulk(&bulk);
+	gpiod_chip_close(chip);
 
 	return 0;
 }
