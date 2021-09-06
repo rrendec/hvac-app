@@ -9,30 +9,14 @@
 #include <sys/time.h>
 #include <modbus/modbus.h>
 
+#include "common.h"
+
 enum {
 	MODE_HEAT,
 	MODE_COOL,
 } mode;
 
 int thres = 5; // 0.5 C
-
-#define prerr(...) do {								\
-	fprintf(stderr, __VA_ARGS__);						\
-	fflush(stderr);								\
-} while (0)
-
-#define first_arg(arg, ...) arg
-#define shift_arg(arg, ...) __VA_OPT__(,) __VA_ARGS__
-
-#define xassert(condition, fallback, ...) do {					\
-	if (!(condition)) {							\
-		prerr("Assertion '%s' failed in %s() [%s:%d]"			\
-			__VA_OPT__(": " first_arg(__VA_ARGS__)) "\n",		\
-			#condition, __func__, __FILE__, __LINE__		\
-			__VA_OPT__(shift_arg(__VA_ARGS__)));			\
-		fallback;							\
-	}									\
-} while (0)
 
 struct sensor_data {
 	// AQ-N-LCD
