@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <assert.h>
+#include <string.h>
 #include <unistd.h>
 #include <gpiod.h>
 #include <time.h>
@@ -11,7 +12,7 @@
 enum {
 	MODE_HEAT,
 	MODE_COOL,
-} mode = MODE_COOL;
+} mode;
 
 int thres = 5; // 0.5 C
 
@@ -119,7 +120,7 @@ void sig_hdlr(int signal)
 	keep_going = 0;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	static const struct sigaction act = {.sa_handler = sig_hdlr};
 
@@ -129,6 +130,21 @@ int main(void)
 	int i, rc;
 	struct sensor_data sd;
 	enum {STATE_OFF, STATE_ON} state = STATE_OFF;
+
+	do {
+		if (argc > 1) {
+			if (!strcmp(argv[1], "heat")) {
+				mode = MODE_HEAT;
+				break;
+			} else if (!strcmp(argv[1], "cool")) {
+				mode = MODE_COOL;
+				break;
+			}
+		}
+
+		fprintf(stderr, "Usage: %s <heat|cool>\n", argv[0]);
+		return EXIT_FAILURE;
+	} while (0);
 
 	sigaction(SIGINT, &act, NULL);
 	sigaction(SIGQUIT, &act, NULL);
@@ -225,5 +241,5 @@ int main(void)
 	gpiod_line_release_bulk(&bulk);
 	gpiod_chip_close(chip);
 
-	return 0;
+	return EXIT_SUCCESS;
 }
