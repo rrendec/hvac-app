@@ -7,3 +7,7 @@ Debug build
 Release build
 	cmake -DCMAKE_BUILD_TYPE=Release
 	make -C build
+
+Debug build with emulator enabled
+	cmake -B build -DCMAKE_BUILD_TYPE=Debug -DWITH_EMULATOR=ON
+	make -C build

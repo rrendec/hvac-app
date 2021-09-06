@@ -1,0 +1,10 @@
+# chip_id line_offset value
+
+# GPIO_GEN0: Furnace blow (G)
+1 17 1
+
+# GPIO_GEN1: Furnace heat (W)
+1 18 1
+
+# GPIO_GEN2: Furnace cool (Y)
+1 27 1

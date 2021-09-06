@@ -1,0 +1,22 @@
+# slave_id register_no value
+
+# AQ-N-LCD: temperature
+1 136 242
+
+# AQ-N-LCD: humidity
+1 137 437
+
+# AQ-N-LCD: air quality
+1 184 108
+
+# AQ-N-LCD: temperature set point
+1 167 230
+
+# AQ-N-LCD: humidity set point
+1 168 350
+
+# X-DUCER DTH: temperature
+2 34 232
+
+# X-DUCER DTH: humidity
+2 35 487
