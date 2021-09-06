@@ -1,0 +1,9 @@
+Build instructions
+
+Debug build
+	cmake -B build -DCMAKE_BUILD_TYPE=Debug
+	make -C build
+
+Release build
+	cmake -DCMAKE_BUILD_TYPE=Release
+	make -C build
