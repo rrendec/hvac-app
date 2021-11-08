@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <errno.h>
 #include <assert.h>
@@ -7,6 +9,8 @@
 #include <time.h>
 #include <signal.h>
 #include <sys/time.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <modbus/modbus.h>
 
 #include "common.h"
@@ -44,6 +48,13 @@ unsigned int gpio_pin_map[NUM_GPIO_PINS] = {
 };
 
 volatile int keep_going = 1;
+volatile pid_t child_pid;
+
+/* hw handles below */
+struct gpiod_chip *chip;
+struct gpiod_line_bulk bulk;
+modbus_t *mb;
+/* end of hw handles */
 
 int sensor_read(modbus_t *mb, struct sensor_data *data)
 {
@@ -102,56 +113,69 @@ void sensor_print(const struct sensor_data *data)
 void sig_hdlr(int signal)
 {
 	keep_going = 0;
+
+	if (child_pid > 0)
+		kill(child_pid, SIGTERM);
 }
 
-int main(int argc, char **argv)
+/**
+ * @note gpiod_line_request_output() additionally sets the pin state. The side
+ *       effect is that we initialize the output pins in a clean state. For
+ *       example, the furnace is turned off.
+ */
+int gpio_init(void)
 {
-	static const struct sigaction act = {.sa_handler = sig_hdlr};
-
-	struct gpiod_chip *chip;
-	struct gpiod_line_bulk bulk;
-	modbus_t *mb;
 	int i, rc;
-	struct sensor_data sd;
-	enum {STATE_OFF, STATE_ON} state = STATE_OFF;
-
-	do {
-		if (argc > 1) {
-			if (!strcmp(argv[1], "heat")) {
-				mode = MODE_HEAT;
-				break;
-			} else if (!strcmp(argv[1], "cool")) {
-				mode = MODE_COOL;
-				break;
-			}
-		}
-
-		fprintf(stderr, "Usage: %s <heat|cool>\n", argv[0]);
-		return EXIT_FAILURE;
-	} while (0);
-
-	sigaction(SIGINT, &act, NULL);
-	sigaction(SIGQUIT, &act, NULL);
-	sigaction(SIGTERM, &act, NULL);
-	signal(SIGUSR1, SIG_IGN);
-	signal(SIGUSR2, SIG_IGN);
 
 	chip = gpiod_chip_open_by_name("gpiochip0");
-	assert(chip);
+	xassert(chip, return errno, "%d", errno);
 
 	rc = gpiod_chip_get_lines(chip, gpio_pin_map, NUM_GPIO_PINS, &bulk);
-	assert(!rc);
+	xassert(!rc, return errno, "%d", errno);
 
 	for (i = 0; i < NUM_GPIO_PINS; i++) {
 		rc = gpiod_line_request_output(bulk.lines[i], "hvac", 1);
-		assert(!rc);
+		xassert(!rc, return errno, "%d", errno);
 	}
 
+	return 0;
+}
+
+void gpio_cleanup(void)
+{
+	gpiod_line_release_bulk(&bulk);
+	gpiod_chip_close(chip);
+}
+
+int modbus_init(void)
+{
+	int rc;
+
 	mb = modbus_new_rtu("/dev/ttyUSB0", 115200, 'N', 8, 1);
-	assert(mb);
+	xassert(mb, return errno, "%d", errno);
 
 	rc = modbus_connect(mb);
-	assert(!rc);
+	xassert(!rc, return errno, "%d", errno);
+
+	return 0;
+}
+
+void modbus_cleanup(void)
+{
+	modbus_close(mb);
+	modbus_free(mb);
+}
+
+int worker(void)
+{
+	struct sensor_data sd;
+	enum {STATE_OFF, STATE_ON} state = STATE_OFF;
+	int i, rc;
+
+	rc = gpio_init();
+	xassert(!rc, return rc, "%d", rc);
+	rc = modbus_init();
+	xassert(!rc, return rc, "%d", rc);
 
 	// Blower on
 	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
@@ -216,14 +240,93 @@ int main(int argc, char **argv)
 	printf("\nShutting down...\n");
 	fflush(stdout);
 
-	modbus_close(mb);
-	modbus_free(mb);
-
+	/*
+	 * Turn the furnace off. GPIO pins keep their state, and we must make
+	 * sure we don't leave heating or cooling running.
+	 */
 	for (i = 0; i < NUM_GPIO_PINS; i++)
 		gpiod_line_set_value(bulk.lines[i], 1);
 
-	gpiod_line_release_bulk(&bulk);
-	gpiod_chip_close(chip);
+	gpio_cleanup();
+	modbus_cleanup();
+
+	return 0;
+}
+
+int main(int argc, char **argv)
+{
+	static const struct sigaction act = {.sa_handler = sig_hdlr};
+
+	int opt, rc;
+	int fg = 0, fail = 0;
+	pid_t wpid_ret;
+	int wstatus = 0;
+
+	while ((opt = getopt(argc, argv, "fm:")) != -1) {
+		switch (opt) {
+		case 'f':
+			fg = 1;
+			break;
+		case 'm':
+			if (!strcmp(optarg, "heat")) {
+				mode = MODE_HEAT;
+			} else if (!strcmp(optarg, "cool")) {
+				mode = MODE_COOL;
+			} else
+				fail = 1;
+			break;
+		default:
+			fail = 1;
+		}
+	}
+
+	if (fail) {
+		fprintf(stderr, "Usage: %s [-f] [-m mode]\n", argv[0]);
+		return EXIT_FAILURE;
+	}
+
+	sigaction(SIGINT, &act, NULL);
+	sigaction(SIGQUIT, &act, NULL);
+	sigaction(SIGTERM, &act, NULL);
+	signal(SIGUSR1, SIG_IGN);
+	signal(SIGUSR2, SIG_IGN);
+
+	if (!fg) {
+		child_pid = fork();
+		xassert(child_pid != -1, return EXIT_FAILURE, "%d", errno);
+	}
+
+	if (!child_pid) {
+		rc = worker();
+		return rc ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
+	/* Supervisor code follows... */
+
+	printf("Started worker process %d\n", child_pid);
+
+	/*
+	 * In case we got a signal before we put the child process pid into the
+	 * child_pid variable, make sure we send a signal to the child. It
+	 * doesn't hurt if we send the signal twice.
+	 */
+	if (!keep_going)
+		kill(child_pid, SIGTERM);
+
+	wpid_ret = TEMP_FAILURE_RETRY(waitpid(child_pid, &wstatus, 0));
+	xassert(wpid_ret > 0, return EXIT_FAILURE, "%d", errno);
+	xassert(wpid_ret == child_pid, return EXIT_FAILURE);
+
+	if (!WIFEXITED(wstatus)) {
+		printf("Worker terminated abnormally... cleaning up\n");
+		rc = gpio_init();
+		xassert(!rc, return EXIT_FAILURE, "%d", rc);
+		/*
+		 * No explicit pin control. Calling gpio_init() is enough to put
+		 * all output pins in a clean state. See function comment.
+		 */
+		gpio_cleanup();
+	}
 
 	return EXIT_SUCCESS;
 }
