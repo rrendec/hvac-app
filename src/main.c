@@ -8,7 +8,6 @@
 #include <gpiod.h>
 #include <time.h>
 #include <signal.h>
-#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <modbus/modbus.h>
@@ -98,18 +97,6 @@ int sensor_read(modbus_t *mb, struct sensor_data *data)
 	return 0;
 }
 
-void sensor_print(const struct sensor_data *data)
-{
-	printf("Temp1\t%.01f\n", data->temp1 / 10.0);
-	printf("Temp2\t%.01f\n", data->temp2 / 10.0);
-	printf("Hum1\t%.01f\n", data->hum1 / 10.0);
-	printf("Hum2\t%.01f\n", data->hum2 / 10.0);
-	printf("AQ\t%d\n", data->aq);
-	putchar('\n');
-	printf("Temp SP\t%.01f\n", data->temp_sp / 10.0);
-	printf("Hum SP\t%.01f\n", data->hum_sp / 10.0);
-}
-
 void sig_hdlr(int signal)
 {
 	keep_going = 0;
@@ -184,14 +171,7 @@ int worker(void)
 	sleep(2);
 
 	while (keep_going) {
-		struct timeval tv;
-		struct tm *tm;
 		int temp;
-
-		gettimeofday(&tv, NULL);
-		tm = localtime(&tv.tv_sec);
-		printf("\n\n%s\n", asctime(tm));
-		fflush(stdout);
 
 		rc = sensor_read(mb, &sd);
 		if (rc) {
@@ -199,46 +179,47 @@ int worker(void)
 			continue;
 		}
 
-		temp = (sd.temp1 + 3 * sd.temp2) / 4;
+		xprintf(SD_DEBUG
+			"T1=%.01f T2=%.01f H1=%.01f H2=%.01f AQ=%d TP=%.01f HP=%.01f\n",
+			sd.temp1 / 10.0, sd.temp2 / 10.0,
+			sd.hum1 / 10.0, sd.hum2 / 10.0,
+			sd.aq, sd.temp_sp / 10.0, sd.hum_sp / 10.0);
 
-		sensor_print(&sd);
-		fflush(stdout);
+		temp = (sd.temp1 + 3 * sd.temp2) / 4;
 
 		switch (mode) {
 		case MODE_HEAT:
 			if (temp > sd.temp_sp + thres && state == STATE_ON) {
-				printf("\n* HEAT OFF\n");
+				xprintf(SD_NOTICE "HEAT OFF\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
 				state = STATE_OFF;
 				break;
 			}
 			if (temp < sd.temp_sp - thres && state == STATE_OFF) {
-				printf("\n* HEAT ON\n");
+				xprintf(SD_NOTICE "HEAT ON\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 0);
 				state = STATE_ON;
 			}
 			break;
 		case MODE_COOL:
 			if (temp > sd.temp_sp + thres && state == STATE_OFF) {
-				printf("\n* COOL ON\n");
+				xprintf(SD_NOTICE "COOL ON\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
 				state = STATE_ON;
 				break;
 			}
 			if (temp < sd.temp_sp - thres && state == STATE_ON) {
-				printf("\n* COOL OFF\n");
+				xprintf(SD_NOTICE "COOL OFF\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
 				state = STATE_OFF;
 			}
 			break;
 		}
 
-		fflush(stdout);
 		sleep(5);
 	}
 
-	printf("\nShutting down...\n");
-	fflush(stdout);
+	xprintf(SD_INFO "Shutting down...\n");
 
 	/*
 	 * Turn the furnace off. GPIO pins keep their state, and we must make
@@ -303,7 +284,7 @@ int main(int argc, char **argv)
 
 	/* Supervisor code follows... */
 
-	printf("Started worker process %d\n", child_pid);
+	xprintf(SD_INFO "Started worker process %d\n", child_pid);
 
 	/*
 	 * In case we got a signal before we put the child process pid into the
@@ -318,7 +299,7 @@ int main(int argc, char **argv)
 	xassert(wpid_ret == child_pid, return EXIT_FAILURE);
 
 	if (!WIFEXITED(wstatus)) {
-		printf("Worker terminated abnormally... cleaning up\n");
+		xprintf(SD_ERR "Worker terminated abnormally... cleaning up\n");
 		rc = gpio_init();
 		xassert(!rc, return EXIT_FAILURE, "%d", rc);
 		/*
