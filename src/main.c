@@ -153,6 +153,32 @@ void modbus_cleanup(void)
 	modbus_free(mb);
 }
 
+void sensors_print(struct sensor_data *sd)
+{
+	xprintf(SD_DEBUG
+		"T1=%.01f T2=%.01f H1=%.01f H2=%.01f AQ=%d TP=%.01f HP=%.01f\n",
+		sd->temp1 / 10.0, sd->temp2 / 10.0,
+		sd->hum1 / 10.0, sd->hum2 / 10.0,
+		sd->aq, sd->temp_sp / 10.0, sd->hum_sp / 10.0);
+}
+
+int sensors_once(void)
+{
+	struct sensor_data sd;
+	int rc;
+
+	rc = modbus_init();
+	xassert(!rc, return rc, "%d", rc);
+
+	rc = sensor_read(mb, &sd);
+	xassert(!rc, return rc, "%d", rc);
+
+	sensors_print(&sd);
+	modbus_cleanup();
+
+	return 0;
+}
+
 int worker(void)
 {
 	struct sensor_data sd;
@@ -179,12 +205,7 @@ int worker(void)
 			continue;
 		}
 
-		xprintf(SD_DEBUG
-			"T1=%.01f T2=%.01f H1=%.01f H2=%.01f AQ=%d TP=%.01f HP=%.01f\n",
-			sd.temp1 / 10.0, sd.temp2 / 10.0,
-			sd.hum1 / 10.0, sd.hum2 / 10.0,
-			sd.aq, sd.temp_sp / 10.0, sd.hum_sp / 10.0);
-
+		sensors_print(&sd);
 		temp = (sd.temp1 + 3 * sd.temp2) / 4;
 
 		switch (mode) {
@@ -243,7 +264,7 @@ int main(int argc, char **argv)
 	pid_t wpid_ret;
 	int wstatus = 0;
 
-	while ((opt = getopt(argc, argv, "fm:")) != -1) {
+	while ((opt = getopt(argc, argv, "fm:s")) != -1) {
 		switch (opt) {
 		case 'f':
 			fg = 1;
@@ -256,6 +277,8 @@ int main(int argc, char **argv)
 			} else
 				fail = 1;
 			break;
+		case 's':
+			return sensors_once() ? EXIT_FAILURE : EXIT_SUCCESS;
 		default:
 			fail = 1;
 		}
