@@ -16,3 +16,6 @@ endif()
 
 add_executable(hvac ${hvac_SOURCES})
 target_link_libraries(hvac ${hvac_LIBS})
+
+install(TARGETS hvac DESTINATION bin)
+install(FILES systemd/hvac.service DESTINATION lib/systemd/system)

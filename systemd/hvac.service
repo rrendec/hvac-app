@@ -1,0 +1,11 @@
+[Unit]
+Description=HVAC Control Daemon
+
+[Service]
+Type=exec
+User=pi
+Group=pi
+ExecStart=/usr/local/bin/hvac
+
+[Install]
+WantedBy=multi-user.target
