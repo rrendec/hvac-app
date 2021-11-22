@@ -58,7 +58,9 @@ modbus_t *mb;
 int sensor_read(modbus_t *mb, struct sensor_data *data)
 {
 	uint16_t reg[2];
-	int rc;
+	int rc, ret = 0;
+
+	memset(data, 0, sizeof(*data));
 
 	// Note: Delay required between consecutive Modbus transactions with
 	//       the same sensor, or else the sensor will ignore the second
@@ -66,35 +68,36 @@ int sensor_read(modbus_t *mb, struct sensor_data *data)
 	//       okay. Use 10 ms just to be on the safe side.
 
 	rc = modbus_set_slave(mb, 1);
-	xassert(!rc, return errno, "%d", errno);
+	xassert(!rc, goto read2, "%d", errno);
 
 	usleep(10000);
 	rc = modbus_read_registers(mb, 136, 2, reg);
-	xassert(rc != -1, return errno, "%d", errno);
+	xassert(rc != -1, ret = errno, "%d", errno);
 	data->temp1 = reg[0];
 	data->hum1 = reg[1];
 
 	usleep(10000);
 	rc = modbus_read_registers(mb, 184, 1, reg);
-	xassert(rc != -1, return errno, "%d", errno);
+	xassert(rc != -1, ret = errno, "%d", errno);
 	data->aq = reg[0];
 
 	usleep(10000);
 	rc = modbus_read_registers(mb, 167, 2, reg);
-	xassert(rc != -1, return errno, "%d", errno);
+	xassert(rc != -1, ret = errno, "%d", errno);
 	data->temp_sp = reg[0];
 	data->hum_sp = reg[1];
 
+read2:
 	rc = modbus_set_slave(mb, 2);
 	xassert(!rc, return errno, "%d", errno);
 
 	usleep(10000);
 	rc = modbus_read_registers(mb, 34, 2, reg);
-	xassert(rc != -1, return errno, "%d", errno);
+	xassert(rc != -1, ret = errno, "%d", errno);
 	data->temp2 = reg[0] + 9; // FIXME: hard-coded calibration
 	data->hum2 = reg[1] - 44; // FIXME: hard-coded calibration
 
-	return 0;
+	return ret;
 }
 
 void sig_hdlr(int signal)
@@ -170,10 +173,9 @@ int sensors_once(void)
 	rc = modbus_init();
 	xassert(!rc, return rc, "%d", rc);
 
-	rc = sensor_read(mb, &sd);
-	xassert(!rc, return rc, "%d", rc);
-
+	sensor_read(mb, &sd);
 	sensors_print(&sd);
+
 	modbus_cleanup();
 
 	return 0;
