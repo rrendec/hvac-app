@@ -198,26 +198,26 @@ void loop_1_sec(void)
 
 		switch (mode) {
 		case MODE_HEAT:
-			if (temp > sd.temp_sp + thres && state == STATE_ON) {
+			if (temp >= sd.temp_sp + thres && state == STATE_ON) {
 				xprintf(SD_NOTICE "HEAT OFF\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
 				state = STATE_OFF;
 				break;
 			}
-			if (temp < sd.temp_sp - thres && state == STATE_OFF) {
+			if (temp <= sd.temp_sp - thres && state == STATE_OFF) {
 				xprintf(SD_NOTICE "HEAT ON\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 0);
 				state = STATE_ON;
 			}
 			break;
 		case MODE_COOL:
-			if (temp > sd.temp_sp + thres && state == STATE_OFF) {
+			if (temp >= sd.temp_sp + thres && state == STATE_OFF) {
 				xprintf(SD_NOTICE "COOL ON\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
 				state = STATE_ON;
 				break;
 			}
-			if (temp < sd.temp_sp - thres && state == STATE_ON) {
+			if (temp <= sd.temp_sp - thres && state == STATE_ON) {
 				xprintf(SD_NOTICE "COOL OFF\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
 				state = STATE_OFF;
