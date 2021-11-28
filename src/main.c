@@ -37,13 +37,15 @@ enum gpio_pins {
 	GPIO_FURNACE_BLOW,
 	GPIO_FURNACE_HEAT,
 	GPIO_FURNACE_COOL,
+	GPIO_HUM_VALVE,
 	NUM_GPIO_PINS
 };
 
 unsigned int gpio_pin_map[NUM_GPIO_PINS] = {
-	[GPIO_FURNACE_BLOW] = 17, // GPIO_GEN0
-	[GPIO_FURNACE_HEAT] = 18, // GPIO_GEN1
-	[GPIO_FURNACE_COOL] = 27, // GPIO_GEN2
+	[GPIO_FURNACE_BLOW]	= 17,	// GPIO_GEN0
+	[GPIO_FURNACE_HEAT]	= 18,	// GPIO_GEN1
+	[GPIO_FURNACE_COOL]	= 27,	// GPIO_GEN2
+	[GPIO_HUM_VALVE]	= 4,	// GPCLK0
 };
 
 volatile int keep_going = 1;
@@ -181,32 +183,16 @@ int sensors_once(void)
 	return 0;
 }
 
-int worker(void)
+void loop_1_sec(void)
 {
+	static enum {STATE_OFF, STATE_ON} state = STATE_OFF;
+	static int sens_cnt, hum_cnt;
 	struct sensor_data sd;
-	enum {STATE_OFF, STATE_ON} state = STATE_OFF;
-	int i, rc;
+	int temp;
 
-	rc = gpio_init();
-	xassert(!rc, return rc, "%d", rc);
-	rc = modbus_init();
-	xassert(!rc, return rc, "%d", rc);
-
-	// Blower on
-	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
-
-	// In case blower was off, give it time to get to nominal speed
-	sleep(2);
-
-	while (keep_going) {
-		int temp;
-
-		rc = sensor_read(mb, &sd);
-		if (rc) {
-			sleep(1);
-			continue;
-		}
-
+	if (sens_cnt) {
+		sens_cnt = (sens_cnt + 1) % 5;
+	} else if (!sensor_read(mb, &sd)) {
 		sensors_print(&sd);
 		temp = (sd.temp1 + 3 * sd.temp2) / 4;
 
@@ -239,7 +225,34 @@ int worker(void)
 			break;
 		}
 
-		sleep(5);
+		sens_cnt++;
+	}
+
+	if (hum_cnt == 0)
+		gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 0);
+	if (hum_cnt == 5)
+		gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 1);
+	hum_cnt = (hum_cnt + 1) % 30;
+}
+
+int worker(void)
+{
+	int i, rc;
+
+	rc = gpio_init();
+	xassert(!rc, return rc, "%d", rc);
+	rc = modbus_init();
+	xassert(!rc, return rc, "%d", rc);
+
+	// Blower on
+	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
+
+	// In case blower was off, give it time to get to nominal speed
+	sleep(2);
+
+	while (keep_going) {
+		loop_1_sec();
+		sleep(1);
 	}
 
 	xprintf(SD_INFO "Shutting down...\n");
