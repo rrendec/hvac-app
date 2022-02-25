@@ -37,6 +37,11 @@ enum gpio_pins {
 	GPIO_FURNACE_BLOW,
 	GPIO_FURNACE_HEAT,
 	GPIO_FURNACE_COOL,
+#if 0
+	GPIO_HUM_D_CLOSE,
+	GPIO_HUM_D_OPEN,
+#endif
+	GPIO_HUM_FAN,
 	GPIO_HUM_VALVE,
 	NUM_GPIO_PINS
 };
@@ -45,6 +50,11 @@ unsigned int gpio_pin_map[NUM_GPIO_PINS] = {
 	[GPIO_FURNACE_BLOW]	= 17,	// GPIO_GEN0
 	[GPIO_FURNACE_HEAT]	= 18,	// GPIO_GEN1
 	[GPIO_FURNACE_COOL]	= 27,	// GPIO_GEN2
+#if 0
+	[GPIO_HUM_D_CLOSE]	= 23,	// GPIO_GEN4
+	[GPIO_HUM_D_OPEN]	= 24,	// GPIO_GEN5
+#endif
+	[GPIO_HUM_FAN]		= 25,	// GPIO_GEN6
 	[GPIO_HUM_VALVE]	= 4,	// GPCLK0
 };
 
@@ -186,7 +196,7 @@ int sensors_once(void)
 void loop_1_sec(void)
 {
 	static enum {STATE_OFF, STATE_ON} state = STATE_OFF;
-	static int sens_cnt, hum_cnt;
+	static int sens_cnt, hum_cnt, hum_duty;
 	struct sensor_data sd;
 	int temp;
 
@@ -228,9 +238,17 @@ void loop_1_sec(void)
 		sens_cnt++;
 	}
 
+	if (state == STATE_ON) {
+		gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 1);
+		hum_duty = 20;
+	} else {
+		gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 0);
+		hum_duty = 10;
+	}
+
 	if (hum_cnt == 0)
 		gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 0);
-	if (hum_cnt == 5)
+	else if (hum_cnt >= hum_duty)
 		gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 1);
 	hum_cnt = (hum_cnt + 1) % 30;
 }

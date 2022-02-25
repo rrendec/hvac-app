@@ -8,3 +8,15 @@
 
 # GPIO_GEN2: Furnace cool (Y)
 1 27 1
+
+# GPIO_GEN4: Humidifier damper close
+1 23 1
+
+# GPIO_GEN5: Humidifier damper open
+1 24 1
+
+# GPIO_GEN6: Humidifier fan
+1 25 1
+
+# GPCLK0: Humidifier valve
+1 4 1
