@@ -1,13 +1,25 @@
-Build instructions
+# Prerequisites
+
+sudo apt install cmake libmodbus-dev libgpiod-dev libsystemd-dev
+
+# Build instructions
 
 Debug build
 	cmake -B build -DCMAKE_BUILD_TYPE=Debug
 	make -C build
 
 Release build
-	cmake -DCMAKE_BUILD_TYPE=Release
+	cmake -B build -DCMAKE_BUILD_TYPE=Release
 	make -C build
 
 Debug build with emulator enabled
 	cmake -B build -DCMAKE_BUILD_TYPE=Debug -DWITH_EMULATOR=ON
 	make -C build
+
+# Install instructions
+
+sudo cp build/hvac /usr/local/bin/
+sudo mkdir -p /usr/local/lib/systemd/system
+sudo cp systemd/hvac.service /usr/local/lib/systemd/system
+sudo systemctl daemon-reload
+sudo systemctl enable --now hvac
