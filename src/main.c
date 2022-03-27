@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <modbus/modbus.h>
+#include <civetweb.h>
 
 #include "common.h"
 
@@ -255,12 +256,24 @@ void loop_1_sec(void)
 
 int worker(void)
 {
+	static const struct mg_callbacks cv_cbk = {
+	};
+	static const char *cv_opt[] = {
+		"document_root", "web",
+		"listening_ports", "8080",
+		NULL
+	};
+
 	int i, rc;
+	struct mg_context *cv_ctx;
 
 	rc = gpio_init();
 	xassert(!rc, return rc, "%d", rc);
 	rc = modbus_init();
 	xassert(!rc, return rc, "%d", rc);
+
+	mg_init_library(0);
+	cv_ctx = mg_start(&cv_cbk, NULL, cv_opt);
 
 	// Blower on
 	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
@@ -274,6 +287,9 @@ int worker(void)
 	}
 
 	xprintf(SD_INFO "Shutting down...\n");
+
+	mg_stop(cv_ctx);
+	mg_exit_library();
 
 	/*
 	 * Turn the furnace off. GPIO pins keep their state, and we must make
