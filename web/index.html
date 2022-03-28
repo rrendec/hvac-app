@@ -1,0 +1,40 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<head>
+<title>HVAC</title>
+<link type="text/css" rel="stylesheet" href="css/index.css"/>
+<script src="javascript/index.js"></script>
+
+</head>
+	<body>
+		<table class="hvac" cellspacing="0" cellpadding="0">
+			<tr>
+				<td colspan="2">Current data:</td>
+			</tr>
+			<tr>
+				<td class="hvac_temp">Temp</td>
+				<td class="hvac_temp_val" id="curr_temp"></td>
+			</tr>
+			<tr>
+                <td class="hvac_humid">Humid</td>
+                <td class="hvac_humid_val" id="curr_hum"></td>
+            </tr>
+			<tr>
+                <td colspan="2">Set data / Change default values:</td>
+			</tr>
+			<tr>
+                <td class="hvac_temp">Temp</td>
+                <td class="hvac_temp_val">
+					<input type="text" id="set_temp" name="temp" onChange="setParam('/xhr/data', this, 'temp')">
+				</td>
+            </tr>
+
+			<tr>
+                <td class="hvac_humid">Humid</td>
+                <td class="hvac_humid_val"> 
+					<input id="set_hum" type="text" name="humid" onChange="setParam('/xhr/data', this, 'hum')">
+				</td>
+            </tr>
+
+	</body>
+</html>

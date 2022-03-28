@@ -1,0 +1,34 @@
+body.mainbody
+{
+    margin: 6px 6px 4px 6px;
+    background-color:white;
+    font-size:13px;
+    font-family: Arial, Verdana sans;
+}
+
+table.hvac
+{
+    width:98%;
+    margin-left:1%;
+    font:12px  Arial, Verdana, Helvetica, sans-serif;
+    border:1px solid #0189d7;
+    width:600px;
+    margin-top:5px;
+    background-color:white;
+    margin-left:auto;
+    margin-right:auto;
+}
+
+table.hvac td
+{
+    padding-left:5px;
+    padding-right:5px;
+    padding-top:3px;
+    padding-bottom:3px;
+    text-align:left;
+}
+
+input, textarea, select,  input.checkbox
+{
+    border: 1px solid #aaa;
+}
