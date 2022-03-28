@@ -2,7 +2,7 @@
 
 ## Install required packages (Debian/Ubuntu/Raspbian)
 
-sudo apt install cmake libmodbus-dev libgpiod-dev libsystemd-dev civetweb libcivetweb-dev
+sudo apt install cmake libmodbus-dev libgpiod-dev libsystemd-dev civetweb libcivetweb-dev libcjson-dev
 
 ## Install required packages (Fedora)
 

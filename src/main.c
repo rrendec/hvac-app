@@ -8,10 +8,12 @@
 #include <gpiod.h>
 #include <time.h>
 #include <signal.h>
+#include <pthread.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <modbus/modbus.h>
 #include <civetweb.h>
+#include <cjson/cJSON.h>
 
 #include "common.h"
 
@@ -32,6 +34,9 @@ struct sensor_data {
 	// XDUCER-D-TH
 	int temp2;
 	int hum2;
+	// calculated
+	int temp_avg;
+	int hum_avg;
 };
 
 enum gpio_pins {
@@ -67,6 +72,11 @@ struct gpiod_chip *chip;
 struct gpiod_line_bulk bulk;
 modbus_t *mb;
 /* end of hw handles */
+
+/* sensor data below */
+struct sensor_data g_sens_data;
+pthread_mutex_t g_sd_mutex;
+/* end of sensor data */
 
 int sensor_read(modbus_t *mb, struct sensor_data *data)
 {
@@ -110,7 +120,13 @@ read2:
 	data->temp2 = reg[0] + 9; // FIXME: hard-coded calibration
 	data->hum2 = reg[1] - 44; // FIXME: hard-coded calibration
 
-	return ret;
+	if (ret)
+		return ret;
+
+	data->temp_avg = (data->temp1 + 3 * data->temp2) / 4;
+	data->hum_avg = (data->hum1 + 3 * data->hum2) / 4;
+
+	return 0;
 }
 
 void sig_hdlr(int signal)
@@ -199,36 +215,37 @@ void loop_1_sec(void)
 	static enum {STATE_OFF, STATE_ON} state = STATE_OFF;
 	static int sens_cnt, hum_cnt, hum_duty;
 	struct sensor_data sd;
-	int temp;
 
 	if (sens_cnt) {
 		sens_cnt = (sens_cnt + 1) % 5;
 	} else if (!sensor_read(mb, &sd)) {
 		sensors_print(&sd);
-		temp = (sd.temp1 + 3 * sd.temp2) / 4;
+		pthread_mutex_lock(&g_sd_mutex);
+		g_sens_data = sd;
+		pthread_mutex_unlock(&g_sd_mutex);
 
 		switch (mode) {
 		case MODE_HEAT:
-			if (temp >= sd.temp_sp + thres && state == STATE_ON) {
+			if (sd.temp_avg >= sd.temp_sp + thres && state == STATE_ON) {
 				xprintf(SD_NOTICE "HEAT OFF\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
 				state = STATE_OFF;
 				break;
 			}
-			if (temp <= sd.temp_sp - thres && state == STATE_OFF) {
+			if (sd.temp_avg <= sd.temp_sp - thres && state == STATE_OFF) {
 				xprintf(SD_NOTICE "HEAT ON\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 0);
 				state = STATE_ON;
 			}
 			break;
 		case MODE_COOL:
-			if (temp >= sd.temp_sp + thres && state == STATE_OFF) {
+			if (sd.temp_avg >= sd.temp_sp + thres && state == STATE_OFF) {
 				xprintf(SD_NOTICE "COOL ON\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
 				state = STATE_ON;
 				break;
 			}
-			if (temp <= sd.temp_sp - thres && state == STATE_ON) {
+			if (sd.temp_avg <= sd.temp_sp - thres && state == STATE_ON) {
 				xprintf(SD_NOTICE "COOL OFF\n");
 				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
 				state = STATE_OFF;
@@ -254,6 +271,33 @@ void loop_1_sec(void)
 	hum_cnt = (hum_cnt + 1) % 30;
 }
 
+int cv_hdlr_data(struct mg_connection *conn, void *cbdata)
+{
+	struct sensor_data sd;
+	cJSON *rsp_json = cJSON_CreateObject();
+	char *rsp_str;
+	unsigned long len;
+
+	pthread_mutex_lock(&g_sd_mutex);
+	sd = g_sens_data;
+	pthread_mutex_unlock(&g_sd_mutex);
+
+	cJSON_AddItemToObject(rsp_json, "curr_temp", cJSON_CreateNumber(sd.temp_avg / 10.0));
+	cJSON_AddItemToObject(rsp_json, "curr_hum", cJSON_CreateNumber(sd.hum_avg / 10.0));
+	cJSON_AddItemToObject(rsp_json, "set_temp", cJSON_CreateNumber(sd.temp_sp / 10.0));
+	cJSON_AddItemToObject(rsp_json, "set_hum", cJSON_CreateNumber(sd.hum_sp / 10.0));
+
+	rsp_str = cJSON_Print(rsp_json);
+	cJSON_Delete(rsp_json);
+
+	len = strlen(rsp_str);
+	mg_send_http_ok(conn, "text/json", len);
+	mg_write(conn, rsp_str, len);
+	free(rsp_str);
+
+	return 200;
+}
+
 int worker(void)
 {
 	static const struct mg_callbacks cv_cbk = {
@@ -274,6 +318,7 @@ int worker(void)
 
 	mg_init_library(0);
 	cv_ctx = mg_start(&cv_cbk, NULL, cv_opt);
+	mg_set_request_handler(cv_ctx, "/xhr/data", cv_hdlr_data, NULL);
 
 	// Blower on
 	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);

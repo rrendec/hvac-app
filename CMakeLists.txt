@@ -7,7 +7,7 @@ option(WITH_EMULATOR "Enable emulator support" OFF)
 add_compile_options(-Wall -Werror)
 
 set(hvac_SOURCES src/main.c)
-set(hvac_LIBS civetweb)
+set(hvac_LIBS civetweb cjson)
 if(WITH_EMULATOR)
 	list(APPEND hvac_SOURCES src/emulator.c)
 else()
