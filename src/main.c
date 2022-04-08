@@ -9,13 +9,18 @@
 #include <time.h>
 #include <signal.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <math.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/mman.h>
 #include <modbus/modbus.h>
 #include <civetweb.h>
 #include <cjson/cJSON.h>
 
 #include "common.h"
+
+cJSON *config;
 
 enum {
 	MODE_HEAT,
@@ -77,6 +82,25 @@ modbus_t *mb;
 struct sensor_data g_sens_data;
 pthread_mutex_t g_sd_mutex;
 /* end of sensor data */
+
+const char *cfg_get_string(const char *key, const char *_default)
+{
+	cJSON *node = cJSON_GetObjectItem(config, key);
+	const char *value = cJSON_GetStringValue(node);
+
+	return value ? value : _default;
+}
+
+double cfg_get_number(const char *key, double min, double max, double _default)
+{
+	cJSON *node = cJSON_GetObjectItem(config, key);
+	double value = cJSON_GetNumberValue(node);
+
+	return isnan(value) ||
+		(!isnan(min) && value < min) ||
+		(!isnan(max) && value > max) ?
+		_default : value;
+}
 
 int sensor_read(modbus_t *mb, struct sensor_data *data)
 {
@@ -300,11 +324,12 @@ int cv_hdlr_data(struct mg_connection *conn, void *cbdata)
 
 int worker(void)
 {
-	static const struct mg_callbacks cv_cbk = {
+	const struct mg_callbacks cv_cbk = {
 	};
-	static const char *cv_opt[] = {
-		"document_root", "web",
-		"listening_ports", "8080",
+	char http_port[6];
+	const char *cv_opt[] = {
+		"document_root", cfg_get_string("document_root", "web"),
+		"listening_ports", http_port,
 		NULL
 	};
 
@@ -317,6 +342,8 @@ int worker(void)
 	xassert(!rc, return rc, "%d", rc);
 
 	mg_init_library(0);
+	snprintf(http_port, sizeof(http_port), "%d",
+		(int)cfg_get_number("http_port", 1, 65535, 8080));
 	cv_ctx = mg_start(&cv_cbk, NULL, cv_opt);
 	mg_set_request_handler(cv_ctx, "/xhr/data", cv_hdlr_data, NULL);
 
@@ -349,19 +376,84 @@ int worker(void)
 	return 0;
 }
 
+int parse_config(const char *path)
+{
+	int fd, ret = 0;
+	off_t len;
+	char *buf;
+
+	fd = open(path, O_RDONLY, 0);
+	if (fd < 0) {
+		perror(path);
+		return errno;
+	}
+
+	len = lseek(fd, 0, SEEK_END);
+	if (len == (off_t)-1) {
+		perror("lseek");
+		close(fd);
+		return EIO;
+	}
+
+	buf = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
+	if (buf == MAP_FAILED) {
+		perror("mmap");
+		close(fd);
+		return EIO;
+	}
+
+	config = cJSON_ParseWithLength(buf, len);
+
+	if (!config) {
+		const char *err = cJSON_GetErrorPtr();
+		const char *last = err, *p;
+		int line = 1;
+
+		for (p = buf; p < err; p++)
+			if (*p == '\n') {
+				line++;
+				last = p + 1;
+			}
+
+		fprintf(stderr, "Config parse error at line %d column %zu\n",
+			line, err - last);
+
+		ret = EINVAL;
+	}
+
+	munmap(buf, len);
+	close(fd);
+
+	return ret;
+}
+
+void global_cleanup(void)
+{
+	cJSON_Delete(config);
+}
+
 int main(int argc, char **argv)
 {
 	static const struct sigaction act = {.sa_handler = sig_hdlr};
 
 	int opt, rc;
-	int fg = 0, fail = 0;
+	int fg = 0, fail = 0, help = 0;
 	pid_t wpid_ret;
 	int wstatus = 0;
 
-	while ((opt = getopt(argc, argv, "fm:s")) != -1) {
+	atexit(global_cleanup);
+
+	while ((opt = getopt(argc, argv, "c:fhm:s")) != -1) {
 		switch (opt) {
+		case 'c':
+			if (parse_config(optarg))
+				fail = 1;
+			break;
 		case 'f':
 			fg = 1;
+			break;
+		case 'h':
+			help = 1;
 			break;
 		case 'm':
 			if (!strcmp(optarg, "heat")) {
@@ -378,9 +470,17 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (fail) {
-		fprintf(stderr, "Usage: %s [-f] [-m mode]\n", argv[0]);
-		return EXIT_FAILURE;
+	if (help || fail) {
+		fprintf(stderr,
+			"Usage: %s [options]\n"
+			"Options:\n"
+			"  -c file   Read configuration from file\n"
+			"  -f        Foreground mode\n"
+			"  -h        Show this help\n"
+			"  -m mode   Active mode: heat or cool\n"
+			"  -s        Read all sensors once and exit\n",
+			argv[0]);
+		return fail ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 
 	sigaction(SIGINT, &act, NULL);

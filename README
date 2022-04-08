@@ -46,6 +46,10 @@ Debug build with emulator enabled
 # Install instructions
 
 sudo cp build/hvac /usr/local/bin/
+sudo mkdir -p /usr/local/etc/hvac
+sudo cp config.json.sample /usr/local/etc/hvac/config.json
+sudo mkdir -p /usr/local/share/hvac
+sudo cp -rf web /usr/local/share/hvac
 sudo mkdir -p /usr/local/lib/systemd/system
 sudo cp systemd/hvac.service /usr/local/lib/systemd/system
 sudo systemctl daemon-reload
