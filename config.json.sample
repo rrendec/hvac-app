@@ -1,0 +1,4 @@
+{
+	"document_root": "/usr/local/share/hvac/web",
+	"http_port": 8080
+}
