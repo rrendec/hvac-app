@@ -23,8 +23,10 @@
 cJSON *config;
 
 enum {
-	MODE_HEAT,
+	MODE_MIN = 0,
+	MODE_HEAT = MODE_MIN,
 	MODE_COOL,
+	MODE_MAX = MODE_COOL
 } mode;
 
 int thres = 5; // 0.5 C
@@ -83,23 +85,137 @@ struct sensor_data g_sens_data;
 pthread_mutex_t g_sd_mutex;
 /* end of sensor data */
 
-const char *cfg_get_string(const char *key, const char *_default)
+const char *json_get_string(cJSON *json, const char *key, const char *_default)
 {
-	cJSON *node = cJSON_GetObjectItem(config, key);
+	cJSON *node = cJSON_GetObjectItem(json, key);
 	const char *value = cJSON_GetStringValue(node);
 
 	return value ? value : _default;
 }
 
-double cfg_get_number(const char *key, double min, double max, double _default)
+double json_get_number(cJSON *json, const char *key,
+		       double min, double max, double _default)
 {
-	cJSON *node = cJSON_GetObjectItem(config, key);
+	cJSON *node = cJSON_GetObjectItem(json, key);
 	double value = cJSON_GetNumberValue(node);
 
 	return isnan(value) ||
 		(!isnan(min) && value < min) ||
 		(!isnan(max) && value > max) ?
 		_default : value;
+}
+
+int json_read(const char *path, cJSON **json, int *errl, int *errc)
+{
+	int fd, ret = 0;
+	off_t len;
+	char *buf;
+
+	fd = open(path, O_RDONLY, 0);
+	if (fd < 0)
+		return errno;
+
+	len = lseek(fd, 0, SEEK_END);
+	if (len == (off_t)-1) {
+		ret = errno;
+		goto out_close;
+	}
+
+	buf = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
+	if (buf == MAP_FAILED) {
+		ret = errno;
+		goto out_close;
+	}
+
+	*json = cJSON_ParseWithLength(buf, len);
+
+	if (!*json) {
+		const char *err = cJSON_GetErrorPtr();
+		const char *last = err, *p;
+		int line = 1;
+
+		for (p = buf; p < err; p++)
+			if (*p == '\n') {
+				line++;
+				last = p + 1;
+			}
+
+		if (errl)
+			*errl = line;
+		if (errc)
+			*errc = err - last;
+
+		ret = EILSEQ;
+	}
+
+	munmap(buf, len);
+out_close:
+	close(fd);
+
+	return ret;
+}
+
+int json_write(const char *path, cJSON *json)
+{
+	FILE *f = fopen(path, "w");
+	char *str;
+	int rc;
+
+	if (!f)
+		return errno;
+
+	str = cJSON_Print(json);
+	rc = fwrite(str, strlen(str), 1, f) ? 0 : EIO;
+	free(str);
+
+	rc = fclose(f) ? errno : rc;
+
+	return rc;
+}
+
+static inline const char *cfg_get_string(const char *key, const char *_default)
+{
+	return json_get_string(config, key, _default);
+}
+
+static inline double cfg_get_number(const char *key,
+				    double min, double max, double _default)
+{
+	return json_get_number(config, key, min, max, _default);
+}
+
+static inline const char *nvram_path(void)
+{
+	return cfg_get_string("nvram_path", "nvram.json");
+}
+
+int nvram_read(void)
+{
+	cJSON *json = NULL;
+	int rc;
+
+	rc = json_read(nvram_path(), &json, NULL, NULL);
+	if (rc)
+		return rc;
+
+	mode = json_get_number(json, "mode", MODE_MIN, MODE_MAX, MODE_HEAT);
+
+	cJSON_Delete(json);
+
+	return 0;
+}
+
+int nvram_write(void)
+{
+	cJSON *json = cJSON_CreateObject();
+	int rc;
+
+	cJSON_AddItemToObject(json, "mode", cJSON_CreateNumber(mode));
+
+	rc = json_write(nvram_path(), json);
+	cJSON_Delete(json);
+
+	return rc;
 }
 
 int sensor_read(modbus_t *mb, struct sensor_data *data)
@@ -336,6 +452,11 @@ int worker(void)
 	int i, rc;
 	struct mg_context *cv_ctx;
 
+	rc = nvram_read();
+	if (rc == ENOENT)
+		rc = nvram_write();
+	xassert(!rc, return rc, "%d", rc);
+
 	rc = gpio_init();
 	xassert(!rc, return rc, "%d", rc);
 	rc = modbus_init();
@@ -346,6 +467,8 @@ int worker(void)
 		(int)cfg_get_number("http_port", 1, 65535, 8080));
 	cv_ctx = mg_start(&cv_cbk, NULL, cv_opt);
 	mg_set_request_handler(cv_ctx, "/xhr/data", cv_hdlr_data, NULL);
+
+	xprintf(SD_INFO "Mode: %d\n", mode);
 
 	// Blower on
 	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
@@ -378,53 +501,16 @@ int worker(void)
 
 int parse_config(const char *path)
 {
-	int fd, ret = 0;
-	off_t len;
-	char *buf;
+	int l = 0, c = 0;
+	int rc = json_read(path, &config, &l, &c);
 
-	fd = open(path, O_RDONLY, 0);
-	if (fd < 0) {
-		perror(path);
-		return errno;
+	if (rc == EILSEQ) {
+		xprerrf("%s: Parse error at line %d column %d\n", path, l, c);
+	} else if (rc) {
+		xprerrf("%s: %s\n", path, strerror(rc));
 	}
 
-	len = lseek(fd, 0, SEEK_END);
-	if (len == (off_t)-1) {
-		perror("lseek");
-		close(fd);
-		return EIO;
-	}
-
-	buf = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
-	if (buf == MAP_FAILED) {
-		perror("mmap");
-		close(fd);
-		return EIO;
-	}
-
-	config = cJSON_ParseWithLength(buf, len);
-
-	if (!config) {
-		const char *err = cJSON_GetErrorPtr();
-		const char *last = err, *p;
-		int line = 1;
-
-		for (p = buf; p < err; p++)
-			if (*p == '\n') {
-				line++;
-				last = p + 1;
-			}
-
-		fprintf(stderr, "Config parse error at line %d column %zu\n",
-			line, err - last);
-
-		ret = EINVAL;
-	}
-
-	munmap(buf, len);
-	close(fd);
-
-	return ret;
+	return rc;
 }
 
 void global_cleanup(void)
