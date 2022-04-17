@@ -1,4 +1,5 @@
 {
 	"document_root": "/usr/local/share/hvac/web",
-	"http_port": 8080
+	"http_port": 8080,
+	"nvram_path": "/var/local/hvac/nvram.json"
 }
