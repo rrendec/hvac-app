@@ -81,8 +81,8 @@ modbus_t *mb;
 /* end of hw handles */
 
 /* sensor data below */
-struct sensor_data g_sens_data;
-pthread_mutex_t g_sd_mutex;
+struct sensor_data sd_snap;
+pthread_mutex_t sd_mutex;
 /* end of sensor data */
 
 const char *json_get_string(cJSON *json, const char *key, const char *_default)
@@ -360,40 +360,39 @@ void loop_1_sec(void)
 		sens_cnt = (sens_cnt + 1) % 5;
 	} else if (!sensor_read(mb, &sd)) {
 		sensors_print(&sd);
-		pthread_mutex_lock(&g_sd_mutex);
-		g_sens_data = sd;
-		pthread_mutex_unlock(&g_sd_mutex);
+		pthread_mutex_lock(&sd_mutex);
+		sd_snap = sd;
+		pthread_mutex_unlock(&sd_mutex);
+		sens_cnt++;
+	}
 
-		switch (mode) {
-		case MODE_HEAT:
-			if (sd.temp_avg >= sd.temp_sp + thres && state == STATE_ON) {
-				xprintf(SD_NOTICE "HEAT OFF\n");
-				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
-				state = STATE_OFF;
-				break;
-			}
-			if (sd.temp_avg <= sd.temp_sp - thres && state == STATE_OFF) {
-				xprintf(SD_NOTICE "HEAT ON\n");
-				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 0);
-				state = STATE_ON;
-			}
-			break;
-		case MODE_COOL:
-			if (sd.temp_avg >= sd.temp_sp + thres && state == STATE_OFF) {
-				xprintf(SD_NOTICE "COOL ON\n");
-				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
-				state = STATE_ON;
-				break;
-			}
-			if (sd.temp_avg <= sd.temp_sp - thres && state == STATE_ON) {
-				xprintf(SD_NOTICE "COOL OFF\n");
-				gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
-				state = STATE_OFF;
-			}
+	switch (mode) {
+	case MODE_HEAT:
+		if (sd.temp_avg >= sd.temp_sp + thres && state == STATE_ON) {
+			xprintf(SD_NOTICE "HEAT OFF\n");
+			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
+			state = STATE_OFF;
 			break;
 		}
-
-		sens_cnt++;
+		if (sd.temp_avg <= sd.temp_sp - thres && state == STATE_OFF) {
+			xprintf(SD_NOTICE "HEAT ON\n");
+			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 0);
+			state = STATE_ON;
+		}
+		break;
+	case MODE_COOL:
+		if (sd.temp_avg >= sd.temp_sp + thres && state == STATE_OFF) {
+			xprintf(SD_NOTICE "COOL ON\n");
+			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
+			state = STATE_ON;
+			break;
+		}
+		if (sd.temp_avg <= sd.temp_sp - thres && state == STATE_ON) {
+			xprintf(SD_NOTICE "COOL OFF\n");
+			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
+			state = STATE_OFF;
+		}
+		break;
 	}
 
 	if (state == STATE_ON) {
@@ -418,9 +417,9 @@ int cv_hdlr_data(struct mg_connection *conn, void *cbdata)
 	char *rsp_str;
 	unsigned long len;
 
-	pthread_mutex_lock(&g_sd_mutex);
-	sd = g_sens_data;
-	pthread_mutex_unlock(&g_sd_mutex);
+	pthread_mutex_lock(&sd_mutex);
+	sd = sd_snap;
+	pthread_mutex_unlock(&sd_mutex);
 
 	cJSON_AddItemToObject(rsp_json, "curr_temp", cJSON_CreateNumber(sd.temp_avg / 10.0));
 	cJSON_AddItemToObject(rsp_json, "curr_hum", cJSON_CreateNumber(sd.hum_avg / 10.0));
