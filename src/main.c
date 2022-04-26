@@ -44,6 +44,7 @@ struct sensor_data {
 	// calculated
 	int temp_avg;
 	int hum_avg;
+	int valid;
 };
 
 enum gpio_pins {
@@ -272,6 +273,7 @@ read2:
 
 	data->temp_avg = (data->temp1 + 3 * data->temp2) / 4;
 	data->hum_avg = (data->hum1 + 3 * data->hum2) / 4;
+	data->valid = 1;
 
 	return 0;
 }
@@ -357,19 +359,26 @@ int sensors_once(void)
 	return 0;
 }
 
-void loop_1_sec(void)
+int loop_1_sec(void)
 {
 	static enum {STATE_OFF, STATE_ON} state = STATE_OFF;
-	static int sens_cnt, hum_cnt, hum_duty;
+	static int sens_cnt, sens_fail, hum_cnt, hum_duty;
 	static int old_furnace_mode = FURNACE_OFF;
 	static int furnace_holdoff;
 
-	struct sensor_data sd;
+	struct sensor_data sd = {.valid = 0};
 	int thres;
 
 	if (sens_cnt) {
 		sens_cnt = (sens_cnt + 1) % 5;
-	} else if (!sensor_read(mb, &sd)) {
+		sd = sd_snap;
+	} else if (sensor_read(mb, &sd)) {
+		if (sens_fail++ >= 30) {
+			xprintf(SD_ERR, "Sensor failure\n");
+			return 1;
+		}
+	} else {
+		sens_fail = 0;
 		sensors_print(&sd);
 		pthread_mutex_lock(&sd_mutex);
 		sd_snap = sd;
@@ -403,6 +412,8 @@ void loop_1_sec(void)
 			furnace_holdoff--;
 			break;
 		}
+		if (!sd.valid)
+			break;
 		if (sd.temp_avg >= sd.temp_sp + thres && state == STATE_ON) {
 			xprintf(SD_NOTICE "HEAT OFF\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
@@ -422,6 +433,8 @@ void loop_1_sec(void)
 			furnace_holdoff--;
 			break;
 		}
+		if (!sd.valid)
+			break;
 		if (sd.temp_avg >= sd.temp_sp + thres && state == STATE_OFF) {
 			xprintf(SD_NOTICE "COOL ON\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
@@ -455,6 +468,8 @@ void loop_1_sec(void)
 		gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 1);
 		hum_cnt = 0;
 	}
+
+	return 0;
 }
 
 int cv_hdlr_data(struct mg_connection *conn, void *cbdata)
@@ -515,7 +530,8 @@ int worker(void)
 	mg_set_request_handler(cv_ctx, "/xhr/data", cv_hdlr_data, NULL);
 
 	while (keep_going) {
-		loop_1_sec();
+		if (loop_1_sec())
+			break;
 		sleep(1);
 	}
 
