@@ -20,16 +20,16 @@
 
 #include "common.h"
 
-cJSON *config;
-
-enum {
-	MODE_MIN = 0,
-	MODE_HEAT = MODE_MIN,
-	MODE_COOL,
-	MODE_MAX = MODE_COOL
-} mode;
-
-int thres = 5; // 0.5 C
+struct run_mode {
+	enum {
+		FURNACE_OFF,
+		FURNACE_FAN,
+		FURNACE_HEAT,
+		FURNACE_COOL,
+		FURNACE_MAX = FURNACE_COOL
+	} furnace;
+	int temp_thres;
+};
 
 struct sensor_data {
 	// AQ-N-LCD
@@ -59,6 +59,8 @@ enum gpio_pins {
 	NUM_GPIO_PINS
 };
 
+cJSON *config;
+
 unsigned int gpio_pin_map[NUM_GPIO_PINS] = {
 	[GPIO_FURNACE_BLOW]	= 17,	// GPIO_GEN0
 	[GPIO_FURNACE_HEAT]	= 18,	// GPIO_GEN1
@@ -84,6 +86,11 @@ modbus_t *mb;
 struct sensor_data sd_snap;
 pthread_mutex_t sd_mutex;
 /* end of sensor data */
+
+struct run_mode run_mode = {
+	.furnace = FURNACE_OFF,
+	.temp_thres = 5, // 0.5 C
+};
 
 const char *json_get_string(cJSON *json, const char *key, const char *_default)
 {
@@ -198,7 +205,7 @@ int nvram_read(void)
 	if (rc)
 		return rc;
 
-	mode = json_get_number(json, "mode", MODE_MIN, MODE_MAX, MODE_HEAT);
+	run_mode.furnace = json_get_number(json, "furnace", 0, FURNACE_MAX, FURNACE_OFF);
 
 	cJSON_Delete(json);
 
@@ -210,7 +217,7 @@ int nvram_write(void)
 	cJSON *json = cJSON_CreateObject();
 	int rc;
 
-	cJSON_AddItemToObject(json, "mode", cJSON_CreateNumber(mode));
+	cJSON_AddItemToObject(json, "furnace", cJSON_CreateNumber(run_mode.furnace));
 
 	rc = json_write(nvram_path(), json);
 	cJSON_Delete(json);
@@ -354,7 +361,11 @@ void loop_1_sec(void)
 {
 	static enum {STATE_OFF, STATE_ON} state = STATE_OFF;
 	static int sens_cnt, hum_cnt, hum_duty;
+	static int old_furnace_mode = FURNACE_OFF;
+	static int furnace_holdoff;
+
 	struct sensor_data sd;
+	int thres;
 
 	if (sens_cnt) {
 		sens_cnt = (sens_cnt + 1) % 5;
@@ -366,8 +377,32 @@ void loop_1_sec(void)
 		sens_cnt++;
 	}
 
-	switch (mode) {
-	case MODE_HEAT:
+	thres = run_mode.temp_thres;
+	if (run_mode.furnace != old_furnace_mode) {
+		xprintf(SD_NOTICE "Furnace mode: %d\n", run_mode.furnace);
+		furnace_holdoff = 5;
+		state = STATE_OFF;
+		old_furnace_mode = run_mode.furnace;
+	}
+
+	switch (run_mode.furnace) {
+	case FURNACE_OFF:
+		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 1);
+		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
+		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
+		break;
+	case FURNACE_FAN:
+		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
+		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
+		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
+		break;
+	case FURNACE_HEAT:
+		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
+		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
+		if (furnace_holdoff) {
+			furnace_holdoff--;
+			break;
+		}
 		if (sd.temp_avg >= sd.temp_sp + thres && state == STATE_ON) {
 			xprintf(SD_NOTICE "HEAT OFF\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
@@ -380,7 +415,13 @@ void loop_1_sec(void)
 			state = STATE_ON;
 		}
 		break;
-	case MODE_COOL:
+	case FURNACE_COOL:
+		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
+		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
+		if (furnace_holdoff) {
+			furnace_holdoff--;
+			break;
+		}
 		if (sd.temp_avg >= sd.temp_sp + thres && state == STATE_OFF) {
 			xprintf(SD_NOTICE "COOL ON\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
@@ -395,19 +436,25 @@ void loop_1_sec(void)
 		break;
 	}
 
-	if (state == STATE_ON) {
-		gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 1);
-		hum_duty = 20;
-	} else {
-		gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 0);
-		hum_duty = 10;
-	}
+	if (run_mode.furnace == FURNACE_HEAT) {
+		if (state == STATE_ON) {
+			gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 1);
+			hum_duty = 20;
+		} else {
+			gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 0);
+			hum_duty = 10;
+		}
 
-	if (hum_cnt == 0)
-		gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 0);
-	else if (hum_cnt >= hum_duty)
+		if (hum_cnt == 0)
+			gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 0);
+		else if (hum_cnt >= hum_duty)
+			gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 1);
+		hum_cnt = (hum_cnt + 1) % 30;
+	} else {
+		gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 1);
 		gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 1);
-	hum_cnt = (hum_cnt + 1) % 30;
+		hum_cnt = 0;
+	}
 }
 
 int cv_hdlr_data(struct mg_connection *conn, void *cbdata)
@@ -466,14 +513,6 @@ int worker(void)
 		(int)cfg_get_number("http_port", 1, 65535, 8080));
 	cv_ctx = mg_start(&cv_cbk, NULL, cv_opt);
 	mg_set_request_handler(cv_ctx, "/xhr/data", cv_hdlr_data, NULL);
-
-	xprintf(SD_INFO "Mode: %d\n", mode);
-
-	// Blower on
-	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
-
-	// In case blower was off, give it time to get to nominal speed
-	sleep(2);
 
 	while (keep_going) {
 		loop_1_sec();
@@ -542,9 +581,9 @@ int main(int argc, char **argv)
 			break;
 		case 'm':
 			if (!strcmp(optarg, "heat")) {
-				mode = MODE_HEAT;
+				run_mode.furnace = FURNACE_HEAT;
 			} else if (!strcmp(optarg, "cool")) {
-				mode = MODE_COOL;
+				run_mode.furnace = FURNACE_COOL;
 			} else
 				fail = 1;
 			break;
