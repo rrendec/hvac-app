@@ -85,7 +85,7 @@ modbus_t *mb;
 
 /* sensor data below */
 struct sensor_data sd_snap;
-pthread_mutex_t sd_mutex;
+pthread_mutex_t sd_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* end of sensor data */
 
 struct run_mode run_mode = {
