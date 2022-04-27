@@ -151,7 +151,7 @@ int modbus_set_slave(modbus_t* ctx, int slave)
 static int modbus_read_one(int slave, int addr, uint16_t *dest)
 {
 	char buf[120], *p;
-	unsigned int xslave, xaddr, xvalue;
+	int xslave, xaddr, xvalue;
 	int ret = EIO;
 	FILE *in = fopen(modbus_path, "r");
 
@@ -163,12 +163,18 @@ static int modbus_read_one(int slave, int addr, uint16_t *dest)
 		if (p)
 			*p = '\0';
 
-		if (sscanf(buf, "%u %u %u", &xslave, &xaddr, &xvalue) == 3 &&
-			xslave == slave && xaddr == addr) {
+		if (sscanf(buf, "%d %d %d", &xslave, &xaddr, &xvalue) != 3 ||
+		    xslave != slave || xaddr != addr)
+			continue;
+
+		if (xvalue < 0) {
+			ret = -xvalue;
+		} else {
 			*dest = xvalue;
 			ret = 0;
-			break;
 		}
+
+		break;
 	}
 
 	fclose(in);
@@ -182,8 +188,10 @@ int modbus_read_registers(modbus_t *ctx, int addr, int nb, uint16_t *dest)
 
 	while (nb-- > 0) {
 		rc = modbus_read_one(ctx->slave, addr++, dest++);
-		if (rc)
-			return rc;
+		if (rc) {
+			errno = rc;
+			return -1;
+		}
 	}
 
 	return 0;
