@@ -1,4 +1,7 @@
 # slave_id register_no value
+#
+# Use negative values as (POSIX) error numbers
+# to simulate read failures.
 
 # AQ-N-LCD: temperature
 1 136 242
