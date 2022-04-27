@@ -60,6 +60,13 @@ enum gpio_pins {
 	NUM_GPIO_PINS
 };
 
+const char * const rm_furnace_map[] = {
+	[FURNACE_OFF]	= "off",
+	[FURNACE_FAN]	= "fan",
+	[FURNACE_HEAT]	= "heat",
+	[FURNACE_COOL]	= "cool",
+};
+
 cJSON *config;
 
 unsigned int gpio_pin_map[NUM_GPIO_PINS] = {
@@ -88,10 +95,26 @@ struct sensor_data sd_snap;
 pthread_mutex_t sd_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* end of sensor data */
 
-struct run_mode run_mode = {
+/* run mode data below */
+struct run_mode rm_data = {
 	.furnace = FURNACE_OFF,
 	.temp_thres = 5, // 0.5 C
 };
+pthread_mutex_t rm_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* end of run mode data */
+
+int _map_find(const char * const *map, int size, const char *key)
+{
+	int i;
+
+	for (i = 0; i < size; i++)
+		if (strcmp(map[i], key) == 0)
+			return i;
+
+	return -1;
+}
+
+#define map_find(map, key) _map_find(map, ARRAY_SIZE(map), key)
 
 const char *json_get_string(cJSON *json, const char *key, const char *_default)
 {
@@ -100,6 +123,11 @@ const char *json_get_string(cJSON *json, const char *key, const char *_default)
 
 	return value ? value : _default;
 }
+
+#define json_map_string(json, key, _default, map) ({				\
+	const char *str = json_get_string(json, key, _default);			\
+	str ? map_find(map, str) : -1;						\
+})
 
 double json_get_number(cJSON *json, const char *key,
 		       double min, double max, double _default)
@@ -206,7 +234,7 @@ int nvram_read(void)
 	if (rc)
 		return rc;
 
-	run_mode.furnace = json_get_number(json, "furnace", 0, FURNACE_MAX, FURNACE_OFF);
+	rm_data.furnace = json_get_number(json, "furnace", 0, FURNACE_MAX, FURNACE_OFF);
 
 	cJSON_Delete(json);
 
@@ -216,9 +244,14 @@ int nvram_read(void)
 int nvram_write(void)
 {
 	cJSON *json = cJSON_CreateObject();
+	struct run_mode rm_snap;
 	int rc;
 
-	cJSON_AddItemToObject(json, "furnace", cJSON_CreateNumber(run_mode.furnace));
+	pthread_mutex_lock(&rm_mutex);
+	rm_snap = rm_data;
+	pthread_mutex_unlock(&rm_mutex);
+
+	cJSON_AddItemToObject(json, "furnace", cJSON_CreateNumber(rm_snap.furnace));
 
 	rc = json_write(nvram_path(), json);
 	cJSON_Delete(json);
@@ -367,6 +400,7 @@ int loop_1_sec(void)
 	static int furnace_holdoff;
 
 	struct sensor_data sd = {.valid = 0};
+	struct run_mode rm_snap;
 	int thres;
 
 	if (sens_cnt) {
@@ -386,15 +420,20 @@ int loop_1_sec(void)
 		sens_cnt++;
 	}
 
-	thres = run_mode.temp_thres;
-	if (run_mode.furnace != old_furnace_mode) {
-		xprintf(SD_NOTICE "Furnace mode: %d\n", run_mode.furnace);
+	pthread_mutex_lock(&rm_mutex);
+	rm_snap = rm_data;
+	pthread_mutex_unlock(&rm_mutex);
+
+	thres = rm_snap.temp_thres;
+	if (rm_snap.furnace != old_furnace_mode) {
+		xprintf(SD_NOTICE "Furnace mode: %s\n",
+			rm_furnace_map[rm_snap.furnace]);
 		furnace_holdoff = 5;
 		state = STATE_OFF;
-		old_furnace_mode = run_mode.furnace;
+		old_furnace_mode = rm_snap.furnace;
 	}
 
-	switch (run_mode.furnace) {
+	switch (rm_snap.furnace) {
 	case FURNACE_OFF:
 		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 1);
 		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
@@ -449,7 +488,7 @@ int loop_1_sec(void)
 		break;
 	}
 
-	if (run_mode.furnace == FURNACE_HEAT) {
+	if (rm_snap.furnace == FURNACE_HEAT) {
 		if (state == STATE_ON) {
 			gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 1);
 			hum_duty = 20;
@@ -472,7 +511,7 @@ int loop_1_sec(void)
 	return 0;
 }
 
-int cv_hdlr_data(struct mg_connection *conn, void *cbdata)
+int cv_hdlr_data_get(struct mg_connection *conn)
 {
 	struct sensor_data sd;
 	cJSON *rsp_json = cJSON_CreateObject();
@@ -497,6 +536,77 @@ int cv_hdlr_data(struct mg_connection *conn, void *cbdata)
 	free(rsp_str);
 
 	return 200;
+}
+
+long long cv_read_buf(struct mg_connection *conn, void *buf, long long blen)
+{
+	const struct mg_request_info *ri = mg_get_request_info(conn);
+	long long tlen, rlen;
+
+	if (ri->content_length >= 0)
+		blen = MIN(blen, ri->content_length);
+
+	for (tlen = 0; tlen < blen; tlen += rlen) {
+		rlen = mg_read(conn, buf + tlen, blen - tlen);
+		if (rlen <= 0)
+			return tlen;
+	}
+
+	return tlen;
+}
+
+int cv_hdlr_data_post(struct mg_connection *conn)
+{
+	const char *ctype = mg_get_header(conn, "content-type");
+	char buf[2048];
+	long long len;
+	cJSON *req;
+	int val, chg = 0;
+
+	if (ctype && strcmp(ctype, "application/json")) {
+		mg_send_http_error(conn, 400, "Invalid content type");
+		return 400;
+	}
+
+	len = cv_read_buf(conn, buf, sizeof(buf));
+	req = cJSON_ParseWithLength(buf, len);
+
+	if (!req) {
+		const char *err = cJSON_GetErrorPtr();
+		mg_send_http_error(conn, 400, "Parse error at offset %zu",
+				   err - buf);
+		return 400;
+	}
+
+	pthread_mutex_lock(&rm_mutex);
+	if ((val = json_map_string(req, "furnace", NULL, rm_furnace_map)) >= 0) {
+		chg |= rm_data.furnace != val;
+		rm_data.furnace = val;
+	}
+	pthread_mutex_unlock(&rm_mutex);
+
+	cJSON_Delete(req);
+	if (chg)
+		nvram_write();
+
+	mg_send_http_ok(conn, NULL, 0);
+
+	return 200;
+}
+
+int cv_hdlr_data(struct mg_connection *conn, void *cbdata)
+{
+	const struct mg_request_info *ri = mg_get_request_info(conn);
+
+	if (strcmp(ri->request_method, "GET") == 0)
+		return cv_hdlr_data_get(conn);
+
+	if (strcmp(ri->request_method, "POST") == 0)
+		return cv_hdlr_data_post(conn);
+
+	mg_send_http_error(conn, 405, "%s", "");
+
+	return 405;
 }
 
 int worker(void)
@@ -583,7 +693,7 @@ int main(int argc, char **argv)
 
 	atexit(global_cleanup);
 
-	while ((opt = getopt(argc, argv, "c:fhm:s")) != -1) {
+	while ((opt = getopt(argc, argv, "c:fh:s")) != -1) {
 		switch (opt) {
 		case 'c':
 			if (parse_config(optarg))
@@ -594,14 +704,6 @@ int main(int argc, char **argv)
 			break;
 		case 'h':
 			help = 1;
-			break;
-		case 'm':
-			if (!strcmp(optarg, "heat")) {
-				run_mode.furnace = FURNACE_HEAT;
-			} else if (!strcmp(optarg, "cool")) {
-				run_mode.furnace = FURNACE_COOL;
-			} else
-				fail = 1;
 			break;
 		case 's':
 			return sensors_once() ? EXIT_FAILURE : EXIT_SUCCESS;
