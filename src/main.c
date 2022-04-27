@@ -492,7 +492,7 @@ int cv_hdlr_data(struct mg_connection *conn, void *cbdata)
 	cJSON_Delete(rsp_json);
 
 	len = strlen(rsp_str);
-	mg_send_http_ok(conn, "text/json", len);
+	mg_send_http_ok(conn, "application/json", len);
 	mg_write(conn, rsp_str, len);
 	free(rsp_str);
 
