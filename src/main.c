@@ -60,11 +60,22 @@ enum gpio_pins {
 	NUM_GPIO_PINS
 };
 
+enum http_methods {
+	HTTP_GET,
+	HTTP_POST,
+	NUM_HTTP_METHODS
+};
+
 const char * const rm_furnace_map[] = {
 	[FURNACE_OFF]	= "off",
 	[FURNACE_FAN]	= "fan",
 	[FURNACE_HEAT]	= "heat",
 	[FURNACE_COOL]	= "cool",
+};
+
+const char * const http_method_map[] = {
+	[HTTP_GET]	= "GET",
+	[HTTP_POST]	= "POST",
 };
 
 cJSON *config;
@@ -511,7 +522,24 @@ int loop_1_sec(void)
 	return 0;
 }
 
-int cv_hdlr_data_get(struct mg_connection *conn)
+long long cv_read_buf(struct mg_connection *conn, void *buf, long long blen)
+{
+	const struct mg_request_info *ri = mg_get_request_info(conn);
+	long long tlen, rlen;
+
+	if (ri->content_length >= 0)
+		blen = MIN(blen, ri->content_length);
+
+	for (tlen = 0; tlen < blen; tlen += rlen) {
+		rlen = mg_read(conn, buf + tlen, blen - tlen);
+		if (rlen <= 0)
+			return tlen;
+	}
+
+	return tlen;
+}
+
+int cv_hdlr_sensor_data_get(struct mg_connection *conn, void *cbdata)
 {
 	struct sensor_data sd;
 	cJSON *rsp_json = cJSON_CreateObject();
@@ -538,24 +566,36 @@ int cv_hdlr_data_get(struct mg_connection *conn)
 	return 200;
 }
 
-long long cv_read_buf(struct mg_connection *conn, void *buf, long long blen)
+const mg_request_handler cv_hmap_sensor_data[NUM_HTTP_METHODS] = {
+	[HTTP_GET]	= cv_hdlr_sensor_data_get,
+};
+
+int cv_hdlr_run_mode_get(struct mg_connection *conn, void *cbdata)
 {
-	const struct mg_request_info *ri = mg_get_request_info(conn);
-	long long tlen, rlen;
+	struct run_mode rm;
+	cJSON *rsp_json = cJSON_CreateObject();
+	char *rsp_str;
+	unsigned long len;
 
-	if (ri->content_length >= 0)
-		blen = MIN(blen, ri->content_length);
+	pthread_mutex_lock(&rm_mutex);
+	rm = rm_data;
+	pthread_mutex_unlock(&rm_mutex);
 
-	for (tlen = 0; tlen < blen; tlen += rlen) {
-		rlen = mg_read(conn, buf + tlen, blen - tlen);
-		if (rlen <= 0)
-			return tlen;
-	}
+	cJSON_AddItemToObject(rsp_json, "furnace",
+			      cJSON_CreateString(rm_furnace_map[rm.furnace]));
 
-	return tlen;
+	rsp_str = cJSON_Print(rsp_json);
+	cJSON_Delete(rsp_json);
+
+	len = strlen(rsp_str);
+	mg_send_http_ok(conn, "application/json", len);
+	mg_write(conn, rsp_str, len);
+	free(rsp_str);
+
+	return 200;
 }
 
-int cv_hdlr_data_post(struct mg_connection *conn)
+int cv_hdlr_run_mode_post(struct mg_connection *conn, void *cbdata)
 {
 	const char *ctype = mg_get_header(conn, "content-type");
 	char buf[2048];
@@ -594,15 +634,22 @@ int cv_hdlr_data_post(struct mg_connection *conn)
 	return 200;
 }
 
-int cv_hdlr_data(struct mg_connection *conn, void *cbdata)
+const mg_request_handler cv_hmap_run_mode[NUM_HTTP_METHODS] = {
+	[HTTP_GET]	= cv_hdlr_run_mode_get,
+	[HTTP_POST]	= cv_hdlr_run_mode_post,
+};
+
+int cv_hdlr_api(struct mg_connection *conn, void *cbdata)
 {
 	const struct mg_request_info *ri = mg_get_request_info(conn);
+	int method_idx = map_find(http_method_map, ri->request_method);
+	mg_request_handler *hmap = cbdata, hdlr = NULL;
 
-	if (strcmp(ri->request_method, "GET") == 0)
-		return cv_hdlr_data_get(conn);
+	if (method_idx >= 0)
+		hdlr = hmap[method_idx];
 
-	if (strcmp(ri->request_method, "POST") == 0)
-		return cv_hdlr_data_post(conn);
+	if (hdlr)
+		return hdlr(conn, cbdata);
 
 	mg_send_http_error(conn, 405, "%s", "");
 
@@ -637,7 +684,8 @@ int worker(void)
 	snprintf(http_port, sizeof(http_port), "%d",
 		(int)cfg_get_number("http_port", 1, 65535, 8080));
 	cv_ctx = mg_start(&cv_cbk, NULL, cv_opt);
-	mg_set_request_handler(cv_ctx, "/xhr/data", cv_hdlr_data, NULL);
+	mg_set_request_handler(cv_ctx, "/api/runmode", cv_hdlr_api, (void *)cv_hmap_run_mode);
+	mg_set_request_handler(cv_ctx, "/api/sensordata", cv_hdlr_api, (void *)cv_hmap_sensor_data);
 
 	while (keep_going) {
 		if (loop_1_sec())

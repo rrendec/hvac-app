@@ -56,3 +56,8 @@ sudo mkdir -p /usr/local/lib/systemd/system
 sudo cp systemd/hvac.service /usr/local/lib/systemd/system
 sudo systemctl daemon-reload
 sudo systemctl enable --now hvac
+
+# Web API examples
+curl -i http://localhost:8080/api/sensordata
+curl -i http://localhost:8080/api/runmode
+curl -i -d '{"furnace": "heat"}' -H "Content-Type: application/json" -X POST http://localhost:8080/api/runmode
