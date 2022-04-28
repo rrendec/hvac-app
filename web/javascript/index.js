@@ -30,7 +30,7 @@ function finishGettingParam(response)
 		var params = JSON.parse(response);
 		for (var paramId in params)
 			writeParam(params[paramId], paramId);
-		setTimeout(getParams,5000,"/xhr/data");
+		setTimeout(getParams,5000,"/api/sensordata");
 	} catch(e) {return;}
 }
 
@@ -56,4 +56,4 @@ function finishSettingParam()
 		// warning
 	} catch(e) {return;}
 }
-setTimeout(getParams, 1000, "/xhr/data");
+setTimeout(getParams, 1000, "/api/sensordata");
