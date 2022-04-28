@@ -1,22 +1,22 @@
 function makeRequest(url, data, cb, requestType)
 {
-	var xmlhttp = new XMLHttpRequest();
+    var xmlhttp = new XMLHttpRequest();
 
-	xmlhttp.onreadystatechange = function() {
-		if (xmlhttp.readyState == 4) {
-			if (xmlhttp.status==0 || xmlhttp.status>=400)
-				return;
+    xmlhttp.onreadystatechange = function() {
+        if (xmlhttp.readyState == 4) {
+            if (xmlhttp.status==0 || xmlhttp.status>=400)
+                return;
 
-			cb(xmlhttp.responseText);
-		}
-	};
+            cb(xmlhttp.responseText);
+        }
+    };
 
-	if (typeof requestType === 'undefined')
-		requestType = "POST";
+    if (typeof requestType === 'undefined')
+        requestType = "POST";
 
-	xmlhttp.open(requestType, url, true);
-	xmlhttp.setRequestHeader("Content-type", "application/x-www-form-urlencoded");
-	xmlhttp.send(data);
+    xmlhttp.open(requestType, url, true);
+    xmlhttp.setRequestHeader("Content-type", "application/x-www-form-urlencoded");
+    xmlhttp.send(data);
 }
 
 function getParams(url)
@@ -26,34 +26,35 @@ function getParams(url)
 
 function finishGettingParam(response)
 {
-	try {
-		var params = JSON.parse(response);
-		for (var paramId in params)
-			writeParam(params[paramId], paramId);
-		setTimeout(getParams,5000,"/api/sensordata");
-	} catch(e) {return;}
+    try {
+        var params = JSON.parse(response);
+        for (var paramId in params)
+            writeParam(params[paramId], paramId);
+        setTimeout(getParams,5000,"/api/sensordata");
+    } catch(e) {return;}
 }
 
 function writeParam(paramVal,paramId)
 {
-	if (paramId == "set_temp" || paramId == "set_hum")
-		document.getElementById(paramId).value = paramVal;
-	else
-		document.getElementById(paramId).innerHTML = paramVal;
+    if (paramId == "set_temp" || paramId == "set_hum")
+        document.getElementById(paramId).value = paramVal;
+    else
+        document.getElementById(paramId).innerHTML = paramVal;
 }
 
 function setParam(url, value, param)
 {
-	var data = {};
-	data[param] = value;
-	makeRequest(url, data, finishSettingParam);
+    var data = {};
+    data[param] = value;
+    makeRequest(url, data, finishSettingParam);
 }
 
 function finishSettingParam()
 {
-	try {
-		var res = JSON.parse(response);
-		// warning
-	} catch(e) {return;}
+    try {
+        var res = JSON.parse(response);
+        // warning
+    } catch(e) {return;}
 }
+
 setTimeout(getParams, 1000, "/api/sensordata");
