@@ -278,7 +278,9 @@ int nvram_write(void)
 {
 	cJSON *json = cJSON_CreateObject();
 	struct run_mode rm_snap;
-	int rc;
+	const char *cfg_path;
+	char *tmp_path = NULL;
+	int rc = ENOMEM;
 
 	pthread_mutex_lock(&rm_mutex);
 	rm_snap = rm_data;
@@ -289,7 +291,15 @@ int nvram_write(void)
 	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(rm_snap.temp_sp_cool));
 	cJSON_AddItemToObject(json, "hum_sp", cJSON_CreateNumber(rm_snap.hum_sp));
 
-	rc = json_write(nvram_path(), json);
+	cfg_path = nvram_path();
+	if (asprintf(&tmp_path, "%s~", cfg_path) >= 0) {
+		if ((rc = json_write(tmp_path, json)))
+			unlink(tmp_path);
+		else
+			rc = rename(tmp_path, cfg_path) ? errno : 0;
+		free(tmp_path);
+	}
+
 	cJSON_Delete(json);
 
 	return rc;
