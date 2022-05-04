@@ -33,6 +33,8 @@ struct run_mode {
 	int temp_sp_cool;
 	int temp_thres;
 	int hum_sp;
+	// sync to disk delay counter
+	int sync;
 };
 
 struct sensor_data {
@@ -248,6 +250,12 @@ static inline const char *nvram_path(void)
 	return cfg_get_string("nvram_path", "nvram.json");
 }
 
+/*
+ * This function is called once during initialization, before other threads
+ * (such as civetweb) are started. No synchronization is required to access
+ * rm_data. Furthermore, we can use the default values from the rm_data
+ * initializer to avoid duplicating the default values.
+ */
 int nvram_read(void)
 {
 	cJSON *json = NULL;
@@ -257,10 +265,6 @@ int nvram_read(void)
 	if (rc)
 		return rc;
 
-	/*
-	 * We are called only once during initialization. Use the default values
-	 * from the rm_data initializer to avoid duplicating the default values.
-	 */
 	rm_data.furnace = json_get_number(json, "furnace",
 		0, FURNACE_MAX, rm_data.furnace);
 	rm_data.temp_sp_heat = json_get_number(json, "temp_sp_heat",
@@ -275,22 +279,25 @@ int nvram_read(void)
 	return 0;
 }
 
+/*
+ * This function assumes exclusive access to rm_data. It is called either:
+ *   - during initialization, before other threads (such as civetweb) are
+ *     started, and in this case no synchronization is needed; or
+ *   - in the delay loop, and in this case rm_mutex is locked externally.
+ */
 int nvram_write(void)
 {
 	cJSON *json = cJSON_CreateObject();
-	struct run_mode rm_snap;
 	const char *cfg_path;
 	char *tmp_path = NULL;
 	int rc = ENOMEM;
 
-	pthread_mutex_lock(&rm_mutex);
-	rm_snap = rm_data;
-	pthread_mutex_unlock(&rm_mutex);
+	xprintf(SD_DEBUG "Sync run mode data to non-volatile storage\n");
 
-	cJSON_AddItemToObject(json, "furnace", cJSON_CreateNumber(rm_snap.furnace));
-	cJSON_AddItemToObject(json, "temp_sp_heat", cJSON_CreateNumber(rm_snap.temp_sp_heat));
-	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(rm_snap.temp_sp_cool));
-	cJSON_AddItemToObject(json, "hum_sp", cJSON_CreateNumber(rm_snap.hum_sp));
+	cJSON_AddItemToObject(json, "furnace", cJSON_CreateNumber(rm_data.furnace));
+	cJSON_AddItemToObject(json, "temp_sp_heat", cJSON_CreateNumber(rm_data.temp_sp_heat));
+	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(rm_data.temp_sp_cool));
+	cJSON_AddItemToObject(json, "hum_sp", cJSON_CreateNumber(rm_data.hum_sp));
 
 	cfg_path = nvram_path();
 	if (asprintf(&tmp_path, "%s~", cfg_path) >= 0) {
@@ -441,7 +448,6 @@ int loop_1_sec(void)
 	static int furnace_holdoff;
 
 	struct sensor_data sd = {.valid = 0};
-	struct run_mode rm;
 
 	if (sens_cnt) {
 		sens_cnt = (sens_cnt + 1) % 5;
@@ -461,18 +467,16 @@ int loop_1_sec(void)
 	}
 
 	pthread_mutex_lock(&rm_mutex);
-	rm = rm_data;
-	pthread_mutex_unlock(&rm_mutex);
 
-	if (rm.furnace != old_furnace_mode) {
+	if (rm_data.furnace != old_furnace_mode) {
 		xprintf(SD_NOTICE "Furnace mode: %s\n",
-			rm_furnace_map[rm.furnace]);
+			rm_furnace_map[rm_data.furnace]);
 		furnace_holdoff = 5;
 		state = STATE_OFF;
-		old_furnace_mode = rm.furnace;
+		old_furnace_mode = rm_data.furnace;
 	}
 
-	switch (rm.furnace) {
+	switch (rm_data.furnace) {
 	case FURNACE_OFF:
 		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 1);
 		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
@@ -492,14 +496,14 @@ int loop_1_sec(void)
 		}
 		if (!sd.valid)
 			break;
-		if (sd.temp_avg >= rm.temp_sp_heat + rm.temp_thres &&
+		if (sd.temp_avg >= rm_data.temp_sp_heat + rm_data.temp_thres &&
 		    state == STATE_ON) {
 			xprintf(SD_NOTICE "HEAT OFF\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
 			state = STATE_OFF;
 			break;
 		}
-		if (sd.temp_avg <= rm.temp_sp_heat - rm.temp_thres &&
+		if (sd.temp_avg <= rm_data.temp_sp_heat - rm_data.temp_thres &&
 		    state == STATE_OFF) {
 			xprintf(SD_NOTICE "HEAT ON\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 0);
@@ -515,14 +519,14 @@ int loop_1_sec(void)
 		}
 		if (!sd.valid)
 			break;
-		if (sd.temp_avg >= rm.temp_sp_cool + rm.temp_thres &&
+		if (sd.temp_avg >= rm_data.temp_sp_cool + rm_data.temp_thres &&
 		    state == STATE_OFF) {
 			xprintf(SD_NOTICE "COOL ON\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
 			state = STATE_ON;
 			break;
 		}
-		if (sd.temp_avg <= rm.temp_sp_cool - rm.temp_thres &&
+		if (sd.temp_avg <= rm_data.temp_sp_cool - rm_data.temp_thres &&
 		    state == STATE_ON) {
 			xprintf(SD_NOTICE "COOL OFF\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
@@ -531,7 +535,7 @@ int loop_1_sec(void)
 		break;
 	}
 
-	if (rm.furnace == FURNACE_HEAT) {
+	if (rm_data.furnace == FURNACE_HEAT) {
 		if (state == STATE_ON) {
 			gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 1);
 			hum_duty = 20;
@@ -550,6 +554,14 @@ int loop_1_sec(void)
 		gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 1);
 		hum_cnt = 0;
 	}
+
+	if (rm_data.sync == 1) {
+		nvram_write();
+		rm_data.sync = 0;
+	} else if (rm_data.sync)
+		rm_data.sync--;
+
+	pthread_mutex_unlock(&rm_mutex);
 
 	return 0;
 }
@@ -678,11 +690,11 @@ int cv_hdlr_run_mode_post(struct mg_connection *conn, void *cbdata)
 		chg |= rm_data.hum_sp != x;
 		rm_data.hum_sp = x;
 	}
+	if (chg)
+		rm_data.sync = 2;
 	pthread_mutex_unlock(&rm_mutex);
 
 	cJSON_Delete(req);
-	if (chg)
-		nvram_write();
 
 	mg_send_http_ok(conn, NULL, 0);
 
@@ -778,6 +790,14 @@ out_clo_tfd:
 out_stop:
 	mg_stop(cv_ctx);
 	mg_exit_library();
+
+	/*
+	 * Handle pending rm_data sync, in case rm_data has been modified after
+	 * we got the stop signal or shortly before. At this point all extra
+	 * threads (civetweb) are stopped, so no locking is needed.
+	 */
+	if (rm_data.sync)
+		nvram_write();
 
 	/*
 	 * Turn the furnace off. GPIO pins keep their state, and we must make
