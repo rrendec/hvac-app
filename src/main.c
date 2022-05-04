@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/mman.h>
+#include <sys/timerfd.h>
 #include <modbus/modbus.h>
 #include <civetweb.h>
 #include <cjson/cJSON.h>
@@ -712,8 +713,13 @@ int cv_hdlr_api(struct mg_connection *conn, void *cbdata)
 
 int worker(void)
 {
-	const struct mg_callbacks cv_cbk = {
+	static const struct itimerspec its = {
+		.it_interval = {1, 0},
+		.it_value = {1, 0},
 	};
+	static const struct mg_callbacks cv_cbk = {
+	};
+
 	char http_port[6];
 	const char *cv_opt[] = {
 		"document_root", cfg_get_string("document_root", "web"),
@@ -721,7 +727,7 @@ int worker(void)
 		NULL
 	};
 
-	int i, rc;
+	int i, rc, tfd;
 	struct mg_context *cv_ctx;
 
 	rc = nvram_read();
@@ -741,14 +747,35 @@ int worker(void)
 	mg_set_request_handler(cv_ctx, "/api/runmode", cv_hdlr_api, (void *)cv_hmap_run_mode);
 	mg_set_request_handler(cv_ctx, "/api/sensordata", cv_hdlr_api, (void *)cv_hmap_sensor_data);
 
+	tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
+	xassert(tfd != -1, goto out_stop, "%d", errno);
+
+	rc = timerfd_settime(tfd, 0, &its, NULL);
+	xassert(rc != -1, goto out_clo_tfd, "%d", errno);
+
 	while (keep_going) {
+		uint64_t overruns = 0;
+
 		if (loop_1_sec())
 			break;
-		sleep(1);
+
+		do {
+			rc = read(tfd, &overruns, sizeof(overruns));
+		} while (rc == -1 && errno == EINTR && keep_going);
+
+		if (!keep_going)
+			break;
+
+		xassert(rc == sizeof(overruns), continue, "%d %d", rc, errno);
+
+		if (overruns > 1)
+			xprerrf(SD_ERR "Timer overrun: %"PRIu64"\n", overruns);
 	}
 
 	xprintf(SD_INFO "Shutting down...\n");
-
+out_clo_tfd:
+	close(tfd);
+out_stop:
 	mg_stop(cv_ctx);
 	mg_exit_library();
 
