@@ -29,12 +29,18 @@ enum furnace_mode {
 	FURNACE_MAX = FURNACE_COOL
 };
 
+enum std_on_off {
+	STD_OFF,
+	STD_ON,
+};
+
 struct run_data {
 	enum furnace_mode furnace_mode;
+	enum std_on_off humid_mode;
 	int temp_sp_heat;
 	int temp_sp_cool;
 	int temp_thres;
-	int hum_sp;
+	int humid_sp;
 	// sync to disk delay counter
 	int sync;
 };
@@ -42,14 +48,14 @@ struct run_data {
 struct sensor_data {
 	// AQ-N-LCD
 	int temp1;
-	int hum1;
+	int humid1;
 	int aq;
 	// XDUCER-D-TH
 	int temp2;
-	int hum2;
+	int humid2;
 	// calculated
 	int temp_avg;
-	int hum_avg;
+	int humid_avg;
 	int valid;
 };
 
@@ -58,11 +64,11 @@ enum gpio_pins {
 	GPIO_FURNACE_HEAT,
 	GPIO_FURNACE_COOL,
 #if 0
-	GPIO_HUM_D_CLOSE,
-	GPIO_HUM_D_OPEN,
+	GPIO_HUMID_D_CLOSE,
+	GPIO_HUMID_D_OPEN,
 #endif
-	GPIO_HUM_FAN,
-	GPIO_HUM_VALVE,
+	GPIO_HUMID_FAN,
+	GPIO_HUMID_VALVE,
 	NUM_GPIO_PINS
 };
 
@@ -76,14 +82,19 @@ enum http_methods {
 #define TEMP_SP_HEAT_MAX	300
 #define TEMP_SP_COOL_MIN	150
 #define TEMP_SP_COOL_MAX	350
-#define HUM_SP_MIN		100
-#define HUM_SP_MAX		500
+#define HUMID_SP_MIN		100
+#define HUMID_SP_MAX		500
 
 const char * const rd_furnace_map[] = {
 	[FURNACE_OFF]	= "off",
 	[FURNACE_FAN]	= "fan",
 	[FURNACE_HEAT]	= "heat",
 	[FURNACE_COOL]	= "cool",
+};
+
+const char * const std_on_off_map[] = {
+	[STD_OFF]	= "off",
+	[STD_ON]	= "on",
 };
 
 const char * const http_method_map[] = {
@@ -98,11 +109,11 @@ unsigned int gpio_pin_map[NUM_GPIO_PINS] = {
 	[GPIO_FURNACE_HEAT]	= 18,	// GPIO_GEN1
 	[GPIO_FURNACE_COOL]	= 27,	// GPIO_GEN2
 #if 0
-	[GPIO_HUM_D_CLOSE]	= 23,	// GPIO_GEN4
-	[GPIO_HUM_D_OPEN]	= 24,	// GPIO_GEN5
+	[GPIO_HUMID_D_CLOSE]	= 23,	// GPIO_GEN4
+	[GPIO_HUMID_D_OPEN]	= 24,	// GPIO_GEN5
 #endif
-	[GPIO_HUM_FAN]		= 25,	// GPIO_GEN6
-	[GPIO_HUM_VALVE]	= 4,	// GPCLK0
+	[GPIO_HUMID_FAN]	= 25,	// GPIO_GEN6
+	[GPIO_HUMID_VALVE]	= 4,	// GPCLK0
 };
 
 volatile int keep_going = 1;
@@ -125,7 +136,7 @@ struct run_data rd_inst = {
 	.temp_sp_heat = 220,	// 22.0 C
 	.temp_sp_cool = 250,	// 25.0 C
 	.temp_thres = 5,	// 0.5 C
-	.hum_sp = 350,		// 35.0 %
+	.humid_sp = 350,	// 35.0 %
 };
 pthread_mutex_t rd_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* end of run data */
@@ -269,12 +280,14 @@ int nvram_read(void)
 
 	rd_inst.furnace_mode = json_get_number(json, "furnace_mode",
 		0, FURNACE_MAX, rd_inst.furnace_mode);
+	rd_inst.humid_mode = json_get_number(json, "humid_mode",
+		0, STD_ON, rd_inst.humid_mode);
 	rd_inst.temp_sp_heat = json_get_number(json, "temp_sp_heat",
 		TEMP_SP_HEAT_MIN, TEMP_SP_HEAT_MAX, rd_inst.temp_sp_heat);
 	rd_inst.temp_sp_cool = json_get_number(json, "temp_sp_cool",
 		TEMP_SP_COOL_MIN, TEMP_SP_COOL_MAX, rd_inst.temp_sp_cool);
-	rd_inst.hum_sp = json_get_number(json, "hum_sp",
-		HUM_SP_MIN, HUM_SP_MAX, rd_inst.hum_sp);
+	rd_inst.humid_sp = json_get_number(json, "humid_sp",
+		HUMID_SP_MIN, HUMID_SP_MAX, rd_inst.humid_sp);
 
 	cJSON_Delete(json);
 
@@ -297,9 +310,10 @@ int nvram_write(void)
 	xprintf(SD_DEBUG "Sync run mode data to non-volatile storage\n");
 
 	cJSON_AddItemToObject(json, "furnace_mode", cJSON_CreateNumber(rd_inst.furnace_mode));
+	cJSON_AddItemToObject(json, "humid_mode", cJSON_CreateNumber(rd_inst.humid_mode));
 	cJSON_AddItemToObject(json, "temp_sp_heat", cJSON_CreateNumber(rd_inst.temp_sp_heat));
 	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(rd_inst.temp_sp_cool));
-	cJSON_AddItemToObject(json, "hum_sp", cJSON_CreateNumber(rd_inst.hum_sp));
+	cJSON_AddItemToObject(json, "humid_sp", cJSON_CreateNumber(rd_inst.humid_sp));
 
 	cfg_path = nvram_path();
 	if (asprintf(&tmp_path, "%s~", cfg_path) >= 0) {
@@ -334,7 +348,7 @@ int sensor_read(modbus_t *mb, struct sensor_data *data)
 	rc = modbus_read_registers(mb, 136, 2, reg);
 	xassert(rc != -1, ret = errno, "%d", errno);
 	data->temp1 = reg[0];
-	data->hum1 = reg[1];
+	data->humid1 = reg[1];
 
 	usleep(10000);
 	rc = modbus_read_registers(mb, 184, 1, reg);
@@ -349,13 +363,13 @@ read2:
 	rc = modbus_read_registers(mb, 34, 2, reg);
 	xassert(rc != -1, ret = errno, "%d", errno);
 	data->temp2 = reg[0] + 9; // FIXME: hard-coded calibration
-	data->hum2 = reg[1] - 44; // FIXME: hard-coded calibration
+	data->humid2 = reg[1] - 44; // FIXME: hard-coded calibration
 
 	if (ret)
 		return ret;
 
 	data->temp_avg = (data->temp1 + 3 * data->temp2) / 4;
-	data->hum_avg = (data->hum1 + 3 * data->hum2) / 4;
+	data->humid_avg = (data->humid1 + 3 * data->humid2) / 4;
 	data->valid = 1;
 
 	return 0;
@@ -422,7 +436,7 @@ void sensors_print(struct sensor_data *sd)
 	xprintf(SD_DEBUG
 		"T1=%.01f T2=%.01f H1=%.01f H2=%.01f AQ=%d\n",
 		sd->temp1 / 10.0, sd->temp2 / 10.0,
-		sd->hum1 / 10.0, sd->hum2 / 10.0,
+		sd->humid1 / 10.0, sd->humid2 / 10.0,
 		sd->aq);
 }
 
@@ -444,8 +458,8 @@ int sensors_once(void)
 
 int loop_1_sec(void)
 {
-	static enum {STATE_OFF, STATE_ON} state = STATE_OFF;
-	static int sens_cnt, sens_fail, hum_cnt, hum_duty;
+	static enum std_on_off heat_cool_state = STD_OFF;
+	static int sens_cnt, sens_fail, humid_cnt, humid_duty;
 	static int old_furnace_mode = FURNACE_OFF;
 	static int furnace_holdoff;
 
@@ -474,7 +488,7 @@ int loop_1_sec(void)
 		xprintf(SD_NOTICE "Furnace mode: %s\n",
 			rd_furnace_map[rd_inst.furnace_mode]);
 		furnace_holdoff = 5;
-		state = STATE_OFF;
+		heat_cool_state = STD_OFF;
 		old_furnace_mode = rd_inst.furnace_mode;
 	}
 
@@ -499,17 +513,17 @@ int loop_1_sec(void)
 		if (!sd.valid)
 			break;
 		if (sd.temp_avg >= rd_inst.temp_sp_heat + rd_inst.temp_thres &&
-		    state == STATE_ON) {
+		    heat_cool_state == STD_ON) {
 			xprintf(SD_NOTICE "HEAT OFF\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
-			state = STATE_OFF;
+			heat_cool_state = STD_OFF;
 			break;
 		}
 		if (sd.temp_avg <= rd_inst.temp_sp_heat - rd_inst.temp_thres &&
-		    state == STATE_OFF) {
+		    heat_cool_state == STD_OFF) {
 			xprintf(SD_NOTICE "HEAT ON\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 0);
-			state = STATE_ON;
+			heat_cool_state = STD_ON;
 		}
 		break;
 	case FURNACE_COOL:
@@ -522,39 +536,39 @@ int loop_1_sec(void)
 		if (!sd.valid)
 			break;
 		if (sd.temp_avg >= rd_inst.temp_sp_cool + rd_inst.temp_thres &&
-		    state == STATE_OFF) {
+		    heat_cool_state == STD_OFF) {
 			xprintf(SD_NOTICE "COOL ON\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
-			state = STATE_ON;
+			heat_cool_state = STD_ON;
 			break;
 		}
 		if (sd.temp_avg <= rd_inst.temp_sp_cool - rd_inst.temp_thres &&
-		    state == STATE_ON) {
+		    heat_cool_state == STD_ON) {
 			xprintf(SD_NOTICE "COOL OFF\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
-			state = STATE_OFF;
+			heat_cool_state = STD_OFF;
 		}
 		break;
 	}
 
-	if (rd_inst.furnace_mode == FURNACE_HEAT) {
-		if (state == STATE_ON) {
-			gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 1);
-			hum_duty = 20;
+	if (rd_inst.humid_mode == STD_ON && rd_inst.furnace_mode != FURNACE_OFF) {
+		if (heat_cool_state == STD_ON) {
+			gpiod_line_set_value(bulk.lines[GPIO_HUMID_FAN], 1);
+			humid_duty = rd_inst.furnace_mode == FURNACE_HEAT ? 20 : 10;
 		} else {
-			gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 0);
-			hum_duty = 10;
+			gpiod_line_set_value(bulk.lines[GPIO_HUMID_FAN], 0);
+			humid_duty = 10;
 		}
 
-		if (hum_cnt == 0)
-			gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 0);
-		else if (hum_cnt >= hum_duty)
-			gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 1);
-		hum_cnt = (hum_cnt + 1) % 30;
+		if (humid_cnt == 0)
+			gpiod_line_set_value(bulk.lines[GPIO_HUMID_VALVE], 0);
+		else if (humid_cnt >= humid_duty)
+			gpiod_line_set_value(bulk.lines[GPIO_HUMID_VALVE], 1);
+		humid_cnt = (humid_cnt + 1) % 30;
 	} else {
-		gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 1);
-		gpiod_line_set_value(bulk.lines[GPIO_HUM_VALVE], 1);
-		hum_cnt = 0;
+		gpiod_line_set_value(bulk.lines[GPIO_HUMID_FAN], 1);
+		gpiod_line_set_value(bulk.lines[GPIO_HUMID_VALVE], 1);
+		humid_cnt = 0;
 	}
 
 	if (rd_inst.sync == 1) {
@@ -597,7 +611,7 @@ int cv_hdlr_sensor_data_get(struct mg_connection *conn, void *cbdata)
 	pthread_mutex_unlock(&sd_mutex);
 
 	cJSON_AddItemToObject(rsp_json, "curr_temp", cJSON_CreateNumber(sd.temp_avg / 10.0));
-	cJSON_AddItemToObject(rsp_json, "curr_hum", cJSON_CreateNumber(sd.hum_avg / 10.0));
+	cJSON_AddItemToObject(rsp_json, "curr_humid", cJSON_CreateNumber(sd.humid_avg / 10.0));
 
 	rsp_str = cJSON_Print(rsp_json);
 	cJSON_Delete(rsp_json);
@@ -627,12 +641,14 @@ int cv_hdlr_run_data_get(struct mg_connection *conn, void *cbdata)
 
 	cJSON_AddItemToObject(rsp_json, "furnace_mode",
 			      cJSON_CreateString(rd_furnace_map[rd.furnace_mode]));
+	cJSON_AddItemToObject(rsp_json, "humid_mode",
+			      cJSON_CreateString(std_on_off_map[rd.humid_mode]));
 	cJSON_AddItemToObject(rsp_json, "temp_sp_heat",
 			      cJSON_CreateNumber(rd.temp_sp_heat / 10.0));
 	cJSON_AddItemToObject(rsp_json, "temp_sp_cool",
 			      cJSON_CreateNumber(rd.temp_sp_cool / 10.0));
-	cJSON_AddItemToObject(rsp_json, "hum_sp",
-			      cJSON_CreateNumber(rd.hum_sp / 10.0));
+	cJSON_AddItemToObject(rsp_json, "humid_sp",
+			      cJSON_CreateNumber(rd.humid_sp / 10.0));
 
 	rsp_str = cJSON_Print(rsp_json);
 	cJSON_Delete(rsp_json);
@@ -674,6 +690,10 @@ int cv_hdlr_run_data_post(struct mg_connection *conn, void *cbdata)
 		chg |= rd_inst.furnace_mode != idx;
 		rd_inst.furnace_mode = idx;
 	}
+	if ((idx = json_map_string(req, "humid_mode", NULL, std_on_off_map)) >= 0) {
+		chg |= rd_inst.humid_mode != idx;
+		rd_inst.humid_mode = idx;
+	}
 	if (!isnan(val = json_get_number(req, "temp_sp_heat",
 	    TEMP_SP_HEAT_MIN/10.0, TEMP_SP_HEAT_MAX/10.0, NAN))) {
 		int x = val * 10.0;
@@ -686,11 +706,11 @@ int cv_hdlr_run_data_post(struct mg_connection *conn, void *cbdata)
 		chg |= rd_inst.temp_sp_cool != x;
 		rd_inst.temp_sp_cool = x;
 	}
-	if (!isnan(val = json_get_number(req, "hum_sp",
-	    HUM_SP_MIN/10.0, HUM_SP_MAX/10.0, NAN))) {
+	if (!isnan(val = json_get_number(req, "humid_sp",
+	    HUMID_SP_MIN/10.0, HUMID_SP_MAX/10.0, NAN))) {
 		int x = val * 10.0;
-		chg |= rd_inst.hum_sp != x;
-		rd_inst.hum_sp = x;
+		chg |= rd_inst.humid_sp != x;
+		rd_inst.humid_sp = x;
 	}
 	if (chg)
 		rd_inst.sync = 2;

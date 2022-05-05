@@ -36,7 +36,7 @@ function finishGettingParam(response)
 
 function writeParam(paramVal,paramId)
 {
-    if (paramId == "set_temp" || paramId == "set_hum")
+    if (paramId == "set_temp" || paramId == "set_humid")
         document.getElementById(paramId).value = paramVal;
     else
         document.getElementById(paramId).innerHTML = paramVal;
