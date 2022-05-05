@@ -610,8 +610,8 @@ int cv_hdlr_sensor_data_get(struct mg_connection *conn, void *cbdata)
 	sd = sd_snap;
 	pthread_mutex_unlock(&sd_mutex);
 
-	cJSON_AddItemToObject(rsp_json, "curr_temp", cJSON_CreateNumber(sd.temp_avg / 10.0));
-	cJSON_AddItemToObject(rsp_json, "curr_humid", cJSON_CreateNumber(sd.humid_avg / 10.0));
+	cJSON_AddItemToObject(rsp_json, "temp_avg", cJSON_CreateNumber(sd.temp_avg / 10.0));
+	cJSON_AddItemToObject(rsp_json, "humid_avg", cJSON_CreateNumber(sd.humid_avg / 10.0));
 
 	rsp_str = cJSON_Print(rsp_json);
 	cJSON_Delete(rsp_json);
