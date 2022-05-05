@@ -21,14 +21,16 @@
 
 #include "common.h"
 
-struct run_mode {
-	enum {
-		FURNACE_OFF,
-		FURNACE_FAN,
-		FURNACE_HEAT,
-		FURNACE_COOL,
-		FURNACE_MAX = FURNACE_COOL
-	} furnace;
+enum furnace_mode {
+	FURNACE_OFF,
+	FURNACE_FAN,
+	FURNACE_HEAT,
+	FURNACE_COOL,
+	FURNACE_MAX = FURNACE_COOL
+};
+
+struct run_data {
+	enum furnace_mode furnace_mode;
 	int temp_sp_heat;
 	int temp_sp_cool;
 	int temp_thres;
@@ -77,7 +79,7 @@ enum http_methods {
 #define HUM_SP_MIN		100
 #define HUM_SP_MAX		500
 
-const char * const rm_furnace_map[] = {
+const char * const rd_furnace_map[] = {
 	[FURNACE_OFF]	= "off",
 	[FURNACE_FAN]	= "fan",
 	[FURNACE_HEAT]	= "heat",
@@ -117,16 +119,16 @@ struct sensor_data sd_snap;
 pthread_mutex_t sd_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* end of sensor data */
 
-/* run mode data below */
-struct run_mode rm_data = {
-	.furnace = FURNACE_OFF,
+/* run data below */
+struct run_data rd_inst = {
+	.furnace_mode = FURNACE_OFF,
 	.temp_sp_heat = 220,	// 22.0 C
 	.temp_sp_cool = 250,	// 25.0 C
 	.temp_thres = 5,	// 0.5 C
 	.hum_sp = 350,		// 35.0 %
 };
-pthread_mutex_t rm_mutex = PTHREAD_MUTEX_INITIALIZER;
-/* end of run mode data */
+pthread_mutex_t rd_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* end of run data */
 
 int _map_find(const char * const *map, int size, const char *key)
 {
@@ -253,7 +255,7 @@ static inline const char *nvram_path(void)
 /*
  * This function is called once during initialization, before other threads
  * (such as civetweb) are started. No synchronization is required to access
- * rm_data. Furthermore, we can use the default values from the rm_data
+ * rd_inst. Furthermore, we can use the default values from the rd_inst
  * initializer to avoid duplicating the default values.
  */
 int nvram_read(void)
@@ -265,14 +267,14 @@ int nvram_read(void)
 	if (rc)
 		return rc;
 
-	rm_data.furnace = json_get_number(json, "furnace",
-		0, FURNACE_MAX, rm_data.furnace);
-	rm_data.temp_sp_heat = json_get_number(json, "temp_sp_heat",
-		TEMP_SP_HEAT_MIN, TEMP_SP_HEAT_MAX, rm_data.temp_sp_heat);
-	rm_data.temp_sp_cool = json_get_number(json, "temp_sp_cool",
-		TEMP_SP_COOL_MIN, TEMP_SP_COOL_MAX, rm_data.temp_sp_cool);
-	rm_data.hum_sp = json_get_number(json, "hum_sp",
-		HUM_SP_MIN, HUM_SP_MAX, rm_data.hum_sp);
+	rd_inst.furnace_mode = json_get_number(json, "furnace_mode",
+		0, FURNACE_MAX, rd_inst.furnace_mode);
+	rd_inst.temp_sp_heat = json_get_number(json, "temp_sp_heat",
+		TEMP_SP_HEAT_MIN, TEMP_SP_HEAT_MAX, rd_inst.temp_sp_heat);
+	rd_inst.temp_sp_cool = json_get_number(json, "temp_sp_cool",
+		TEMP_SP_COOL_MIN, TEMP_SP_COOL_MAX, rd_inst.temp_sp_cool);
+	rd_inst.hum_sp = json_get_number(json, "hum_sp",
+		HUM_SP_MIN, HUM_SP_MAX, rd_inst.hum_sp);
 
 	cJSON_Delete(json);
 
@@ -280,10 +282,10 @@ int nvram_read(void)
 }
 
 /*
- * This function assumes exclusive access to rm_data. It is called either:
+ * This function assumes exclusive access to rd_inst. It is called either:
  *   - during initialization, before other threads (such as civetweb) are
  *     started, and in this case no synchronization is needed; or
- *   - in the delay loop, and in this case rm_mutex is locked externally.
+ *   - in the delay loop, and in this case rd_mutex is locked externally.
  */
 int nvram_write(void)
 {
@@ -294,10 +296,10 @@ int nvram_write(void)
 
 	xprintf(SD_DEBUG "Sync run mode data to non-volatile storage\n");
 
-	cJSON_AddItemToObject(json, "furnace", cJSON_CreateNumber(rm_data.furnace));
-	cJSON_AddItemToObject(json, "temp_sp_heat", cJSON_CreateNumber(rm_data.temp_sp_heat));
-	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(rm_data.temp_sp_cool));
-	cJSON_AddItemToObject(json, "hum_sp", cJSON_CreateNumber(rm_data.hum_sp));
+	cJSON_AddItemToObject(json, "furnace_mode", cJSON_CreateNumber(rd_inst.furnace_mode));
+	cJSON_AddItemToObject(json, "temp_sp_heat", cJSON_CreateNumber(rd_inst.temp_sp_heat));
+	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(rd_inst.temp_sp_cool));
+	cJSON_AddItemToObject(json, "hum_sp", cJSON_CreateNumber(rd_inst.hum_sp));
 
 	cfg_path = nvram_path();
 	if (asprintf(&tmp_path, "%s~", cfg_path) >= 0) {
@@ -466,17 +468,17 @@ int loop_1_sec(void)
 		sens_cnt++;
 	}
 
-	pthread_mutex_lock(&rm_mutex);
+	pthread_mutex_lock(&rd_mutex);
 
-	if (rm_data.furnace != old_furnace_mode) {
+	if (rd_inst.furnace_mode != old_furnace_mode) {
 		xprintf(SD_NOTICE "Furnace mode: %s\n",
-			rm_furnace_map[rm_data.furnace]);
+			rd_furnace_map[rd_inst.furnace_mode]);
 		furnace_holdoff = 5;
 		state = STATE_OFF;
-		old_furnace_mode = rm_data.furnace;
+		old_furnace_mode = rd_inst.furnace_mode;
 	}
 
-	switch (rm_data.furnace) {
+	switch (rd_inst.furnace_mode) {
 	case FURNACE_OFF:
 		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 1);
 		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
@@ -496,14 +498,14 @@ int loop_1_sec(void)
 		}
 		if (!sd.valid)
 			break;
-		if (sd.temp_avg >= rm_data.temp_sp_heat + rm_data.temp_thres &&
+		if (sd.temp_avg >= rd_inst.temp_sp_heat + rd_inst.temp_thres &&
 		    state == STATE_ON) {
 			xprintf(SD_NOTICE "HEAT OFF\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
 			state = STATE_OFF;
 			break;
 		}
-		if (sd.temp_avg <= rm_data.temp_sp_heat - rm_data.temp_thres &&
+		if (sd.temp_avg <= rd_inst.temp_sp_heat - rd_inst.temp_thres &&
 		    state == STATE_OFF) {
 			xprintf(SD_NOTICE "HEAT ON\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 0);
@@ -519,14 +521,14 @@ int loop_1_sec(void)
 		}
 		if (!sd.valid)
 			break;
-		if (sd.temp_avg >= rm_data.temp_sp_cool + rm_data.temp_thres &&
+		if (sd.temp_avg >= rd_inst.temp_sp_cool + rd_inst.temp_thres &&
 		    state == STATE_OFF) {
 			xprintf(SD_NOTICE "COOL ON\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
 			state = STATE_ON;
 			break;
 		}
-		if (sd.temp_avg <= rm_data.temp_sp_cool - rm_data.temp_thres &&
+		if (sd.temp_avg <= rd_inst.temp_sp_cool - rd_inst.temp_thres &&
 		    state == STATE_ON) {
 			xprintf(SD_NOTICE "COOL OFF\n");
 			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
@@ -535,7 +537,7 @@ int loop_1_sec(void)
 		break;
 	}
 
-	if (rm_data.furnace == FURNACE_HEAT) {
+	if (rd_inst.furnace_mode == FURNACE_HEAT) {
 		if (state == STATE_ON) {
 			gpiod_line_set_value(bulk.lines[GPIO_HUM_FAN], 1);
 			hum_duty = 20;
@@ -555,13 +557,13 @@ int loop_1_sec(void)
 		hum_cnt = 0;
 	}
 
-	if (rm_data.sync == 1) {
+	if (rd_inst.sync == 1) {
 		nvram_write();
-		rm_data.sync = 0;
-	} else if (rm_data.sync)
-		rm_data.sync--;
+		rd_inst.sync = 0;
+	} else if (rd_inst.sync)
+		rd_inst.sync--;
 
-	pthread_mutex_unlock(&rm_mutex);
+	pthread_mutex_unlock(&rd_mutex);
 
 	return 0;
 }
@@ -612,25 +614,25 @@ const mg_request_handler cv_hmap_sensor_data[NUM_HTTP_METHODS] = {
 	[HTTP_GET]	= cv_hdlr_sensor_data_get,
 };
 
-int cv_hdlr_run_mode_get(struct mg_connection *conn, void *cbdata)
+int cv_hdlr_run_data_get(struct mg_connection *conn, void *cbdata)
 {
-	struct run_mode rm;
+	struct run_data rd;
 	cJSON *rsp_json = cJSON_CreateObject();
 	char *rsp_str;
 	unsigned long len;
 
-	pthread_mutex_lock(&rm_mutex);
-	rm = rm_data;
-	pthread_mutex_unlock(&rm_mutex);
+	pthread_mutex_lock(&rd_mutex);
+	rd = rd_inst;
+	pthread_mutex_unlock(&rd_mutex);
 
-	cJSON_AddItemToObject(rsp_json, "furnace",
-			      cJSON_CreateString(rm_furnace_map[rm.furnace]));
+	cJSON_AddItemToObject(rsp_json, "furnace_mode",
+			      cJSON_CreateString(rd_furnace_map[rd.furnace_mode]));
 	cJSON_AddItemToObject(rsp_json, "temp_sp_heat",
-			      cJSON_CreateNumber(rm.temp_sp_heat / 10.0));
+			      cJSON_CreateNumber(rd.temp_sp_heat / 10.0));
 	cJSON_AddItemToObject(rsp_json, "temp_sp_cool",
-			      cJSON_CreateNumber(rm.temp_sp_cool / 10.0));
+			      cJSON_CreateNumber(rd.temp_sp_cool / 10.0));
 	cJSON_AddItemToObject(rsp_json, "hum_sp",
-			      cJSON_CreateNumber(rm.hum_sp / 10.0));
+			      cJSON_CreateNumber(rd.hum_sp / 10.0));
 
 	rsp_str = cJSON_Print(rsp_json);
 	cJSON_Delete(rsp_json);
@@ -643,7 +645,7 @@ int cv_hdlr_run_mode_get(struct mg_connection *conn, void *cbdata)
 	return 200;
 }
 
-int cv_hdlr_run_mode_post(struct mg_connection *conn, void *cbdata)
+int cv_hdlr_run_data_post(struct mg_connection *conn, void *cbdata)
 {
 	const char *ctype = mg_get_header(conn, "content-type");
 	char buf[2048];
@@ -667,32 +669,32 @@ int cv_hdlr_run_mode_post(struct mg_connection *conn, void *cbdata)
 		return 400;
 	}
 
-	pthread_mutex_lock(&rm_mutex);
-	if ((idx = json_map_string(req, "furnace", NULL, rm_furnace_map)) >= 0) {
-		chg |= rm_data.furnace != idx;
-		rm_data.furnace = idx;
+	pthread_mutex_lock(&rd_mutex);
+	if ((idx = json_map_string(req, "furnace_mode", NULL, rd_furnace_map)) >= 0) {
+		chg |= rd_inst.furnace_mode != idx;
+		rd_inst.furnace_mode = idx;
 	}
 	if (!isnan(val = json_get_number(req, "temp_sp_heat",
 	    TEMP_SP_HEAT_MIN/10.0, TEMP_SP_HEAT_MAX/10.0, NAN))) {
 		int x = val * 10.0;
-		chg |= rm_data.temp_sp_heat != x;
-		rm_data.temp_sp_heat = x;
+		chg |= rd_inst.temp_sp_heat != x;
+		rd_inst.temp_sp_heat = x;
 	}
 	if (!isnan(val = json_get_number(req, "temp_sp_cool",
 	    TEMP_SP_COOL_MIN/10.0, TEMP_SP_COOL_MAX/10.0, NAN))) {
 		int x = val * 10.0;
-		chg |= rm_data.temp_sp_cool != x;
-		rm_data.temp_sp_cool = x;
+		chg |= rd_inst.temp_sp_cool != x;
+		rd_inst.temp_sp_cool = x;
 	}
 	if (!isnan(val = json_get_number(req, "hum_sp",
 	    HUM_SP_MIN/10.0, HUM_SP_MAX/10.0, NAN))) {
 		int x = val * 10.0;
-		chg |= rm_data.hum_sp != x;
-		rm_data.hum_sp = x;
+		chg |= rd_inst.hum_sp != x;
+		rd_inst.hum_sp = x;
 	}
 	if (chg)
-		rm_data.sync = 2;
-	pthread_mutex_unlock(&rm_mutex);
+		rd_inst.sync = 2;
+	pthread_mutex_unlock(&rd_mutex);
 
 	cJSON_Delete(req);
 
@@ -701,9 +703,9 @@ int cv_hdlr_run_mode_post(struct mg_connection *conn, void *cbdata)
 	return 200;
 }
 
-const mg_request_handler cv_hmap_run_mode[NUM_HTTP_METHODS] = {
-	[HTTP_GET]	= cv_hdlr_run_mode_get,
-	[HTTP_POST]	= cv_hdlr_run_mode_post,
+const mg_request_handler cv_hmap_run_data[NUM_HTTP_METHODS] = {
+	[HTTP_GET]	= cv_hdlr_run_data_get,
+	[HTTP_POST]	= cv_hdlr_run_data_post,
 };
 
 int cv_hdlr_api(struct mg_connection *conn, void *cbdata)
@@ -756,7 +758,7 @@ int worker(void)
 	snprintf(http_port, sizeof(http_port), "%d",
 		(int)cfg_get_number("http_port", 1, 65535, 8080));
 	cv_ctx = mg_start(&cv_cbk, NULL, cv_opt);
-	mg_set_request_handler(cv_ctx, "/api/runmode", cv_hdlr_api, (void *)cv_hmap_run_mode);
+	mg_set_request_handler(cv_ctx, "/api/rundata", cv_hdlr_api, (void *)cv_hmap_run_data);
 	mg_set_request_handler(cv_ctx, "/api/sensordata", cv_hdlr_api, (void *)cv_hmap_sensor_data);
 
 	tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
@@ -792,11 +794,11 @@ out_stop:
 	mg_exit_library();
 
 	/*
-	 * Handle pending rm_data sync, in case rm_data has been modified after
+	 * Handle pending rd_inst sync, in case rd_inst has been modified after
 	 * we got the stop signal or shortly before. At this point all extra
 	 * threads (civetweb) are stopped, so no locking is needed.
 	 */
-	if (rm_data.sync)
+	if (rd_inst.sync)
 		nvram_write();
 
 	/*
