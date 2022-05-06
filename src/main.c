@@ -63,10 +63,8 @@ enum gpio_pins {
 	GPIO_FURNACE_BLOW,
 	GPIO_FURNACE_HEAT,
 	GPIO_FURNACE_COOL,
-#if 0
 	GPIO_HUMID_D_CLOSE,
 	GPIO_HUMID_D_OPEN,
-#endif
 	GPIO_HUMID_FAN,
 	GPIO_HUMID_VALVE,
 	NUM_GPIO_PINS
@@ -108,10 +106,8 @@ unsigned int gpio_pin_map[NUM_GPIO_PINS] = {
 	[GPIO_FURNACE_BLOW]	= 17,	// GPIO_GEN0
 	[GPIO_FURNACE_HEAT]	= 18,	// GPIO_GEN1
 	[GPIO_FURNACE_COOL]	= 27,	// GPIO_GEN2
-#if 0
 	[GPIO_HUMID_D_CLOSE]	= 23,	// GPIO_GEN4
 	[GPIO_HUMID_D_OPEN]	= 24,	// GPIO_GEN5
-#endif
 	[GPIO_HUMID_FAN]	= 25,	// GPIO_GEN6
 	[GPIO_HUMID_VALVE]	= 4,	// GPCLK0
 };
@@ -461,7 +457,8 @@ int loop_1_sec(void)
 	static enum std_on_off heat_cool_state = STD_OFF;
 	static int sens_cnt, sens_fail, humid_cnt, humid_duty;
 	static int old_furnace_mode = FURNACE_OFF;
-	static int furnace_holdoff;
+	static int old_humid_mode = INT_MAX;
+	static int furnace_holdoff, humid_holdoff;
 
 	struct sensor_data sd = {.valid = 0};
 
@@ -551,7 +548,19 @@ int loop_1_sec(void)
 		break;
 	}
 
-	if (rd_inst.humid_mode == STD_ON && rd_inst.furnace_mode != FURNACE_OFF) {
+	if (rd_inst.humid_mode != old_humid_mode && !humid_holdoff) {
+		xprintf(SD_NOTICE "Humidifier mode: %s\n",
+			std_on_off_map[rd_inst.humid_mode]);
+		gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_CLOSE],
+			!(rd_inst.humid_mode == STD_OFF));
+		gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_OPEN],
+			!(rd_inst.humid_mode == STD_ON));
+		humid_holdoff = 10;
+		old_humid_mode = rd_inst.humid_mode;
+	}
+
+	if (rd_inst.humid_mode == STD_ON && rd_inst.furnace_mode != FURNACE_OFF &&
+	    !humid_holdoff) {
 		if (heat_cool_state == STD_ON) {
 			gpiod_line_set_value(bulk.lines[GPIO_HUMID_FAN], 1);
 			humid_duty = rd_inst.furnace_mode == FURNACE_HEAT ? 20 : 10;
@@ -569,6 +578,13 @@ int loop_1_sec(void)
 		gpiod_line_set_value(bulk.lines[GPIO_HUMID_FAN], 1);
 		gpiod_line_set_value(bulk.lines[GPIO_HUMID_VALVE], 1);
 		humid_cnt = 0;
+	}
+
+	if (humid_holdoff)
+		humid_holdoff--;
+	else {
+		gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_CLOSE], 1);
+		gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_OPEN], 1);
 	}
 
 	if (rd_inst.sync == 1) {
