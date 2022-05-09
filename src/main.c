@@ -746,9 +746,17 @@ const mg_request_handler cv_hmap_run_data[NUM_HTTP_METHODS] = {
 
 int cv_hdlr_api(struct mg_connection *conn, void *cbdata)
 {
+	static const char * const realm = "api";
 	const struct mg_request_info *ri = mg_get_request_info(conn);
 	int method_idx = map_find(http_method_map, ri->request_method);
 	mg_request_handler *hmap = cbdata, hdlr = NULL;
+	const char *passfile = cfg_get_string("http_passwd", "htpasswd");
+
+	if (mg_check_digest_access_authentication(conn, realm, passfile) <= 0) {
+		/* No valid authorization */
+		mg_send_digest_access_authentication_request(conn, realm);
+		return 401;
+	}
 
 	if (method_idx >= 0)
 		hdlr = hmap[method_idx];
