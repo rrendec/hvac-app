@@ -1,5 +1,6 @@
 {
 	"document_root": "/usr/local/share/hvac/web",
 	"http_port": 8080,
+	"http_passwd": "/usr/local/etc/hvac/htpasswd",
 	"nvram_path": "/var/local/hvac/nvram.json"
 }
