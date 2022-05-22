@@ -34,6 +34,8 @@ enum std_on_off {
 	STD_ON,
 };
 
+/* Running mode configuration/settings */
+// TODO: better name
 struct run_data {
 	enum furnace_mode furnace_mode;
 	enum std_on_off humid_mode;
@@ -45,6 +47,19 @@ struct run_data {
 	int sync;
 };
 
+/* Discrete output control data */
+// TODO: better name
+struct ctrl_data {
+	enum std_on_off furnace_blow;
+	enum std_on_off furnace_heat;
+	enum std_on_off furnace_cool;
+	enum std_on_off humid_d_close;
+	enum std_on_off humid_d_open;
+	enum std_on_off humid_fan;
+	enum std_on_off humid_valve;
+};
+
+/* Sensor data - raw and computed */
 struct sensor_data {
 	// AQ-N-LCD
 	int temp1;
@@ -133,6 +148,15 @@ struct run_data rd_inst = {
 	.temp_sp_cool = 250,	// 25.0 C
 	.temp_thres = 5,	// 0.5 C
 	.humid_sp = 350,	// 35.0 %
+};
+struct ctrl_data cd_inst = {
+	.furnace_blow = STD_OFF,
+	.furnace_heat = STD_OFF,
+	.furnace_cool = STD_OFF,
+	.humid_d_close = STD_OFF,
+	.humid_d_open = STD_OFF,
+	.humid_fan = STD_OFF,
+	.humid_valve = STD_OFF,
 };
 pthread_mutex_t rd_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* end of run data */
@@ -491,18 +515,18 @@ int loop_1_sec(void)
 
 	switch (rd_inst.furnace_mode) {
 	case FURNACE_OFF:
-		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 1);
-		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
-		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
+		cd_inst.furnace_blow = STD_OFF;
+		cd_inst.furnace_heat = STD_OFF;
+		cd_inst.furnace_cool = STD_OFF;
 		break;
 	case FURNACE_FAN:
-		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
-		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
-		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
+		cd_inst.furnace_blow = STD_ON;
+		cd_inst.furnace_heat = STD_OFF;
+		cd_inst.furnace_cool = STD_OFF;
 		break;
 	case FURNACE_HEAT:
-		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
-		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
+		cd_inst.furnace_blow = STD_ON;
+		cd_inst.furnace_cool = STD_OFF;
 		if (furnace_holdoff) {
 			furnace_holdoff--;
 			break;
@@ -512,20 +536,20 @@ int loop_1_sec(void)
 		if (sd.temp_avg >= rd_inst.temp_sp_heat + rd_inst.temp_thres &&
 		    heat_cool_state == STD_ON) {
 			xprintf(SD_NOTICE "HEAT OFF\n");
-			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
+			cd_inst.furnace_heat = STD_OFF;
 			heat_cool_state = STD_OFF;
 			break;
 		}
 		if (sd.temp_avg <= rd_inst.temp_sp_heat - rd_inst.temp_thres &&
 		    heat_cool_state == STD_OFF) {
 			xprintf(SD_NOTICE "HEAT ON\n");
-			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 0);
+			cd_inst.furnace_heat = STD_ON;
 			heat_cool_state = STD_ON;
 		}
 		break;
 	case FURNACE_COOL:
-		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], 0);
-		gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], 1);
+		cd_inst.furnace_blow = STD_ON;
+		cd_inst.furnace_heat = STD_OFF;
 		if (furnace_holdoff) {
 			furnace_holdoff--;
 			break;
@@ -535,14 +559,14 @@ int loop_1_sec(void)
 		if (sd.temp_avg >= rd_inst.temp_sp_cool + rd_inst.temp_thres &&
 		    heat_cool_state == STD_OFF) {
 			xprintf(SD_NOTICE "COOL ON\n");
-			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 0);
+			cd_inst.furnace_cool = STD_ON;
 			heat_cool_state = STD_ON;
 			break;
 		}
 		if (sd.temp_avg <= rd_inst.temp_sp_cool - rd_inst.temp_thres &&
 		    heat_cool_state == STD_ON) {
 			xprintf(SD_NOTICE "COOL OFF\n");
-			gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], 1);
+			cd_inst.furnace_cool = STD_OFF;
 			heat_cool_state = STD_OFF;
 		}
 		break;
@@ -551,10 +575,8 @@ int loop_1_sec(void)
 	if (rd_inst.humid_mode != old_humid_mode && !humid_holdoff) {
 		xprintf(SD_NOTICE "Humidifier mode: %s\n",
 			std_on_off_map[rd_inst.humid_mode]);
-		gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_CLOSE],
-			!(rd_inst.humid_mode == STD_OFF));
-		gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_OPEN],
-			!(rd_inst.humid_mode == STD_ON));
+		cd_inst.humid_d_close = rd_inst.humid_mode == STD_OFF;
+		cd_inst.humid_d_open = rd_inst.humid_mode == STD_ON;
 		humid_holdoff = 10;
 		old_humid_mode = rd_inst.humid_mode;
 	}
@@ -562,29 +584,29 @@ int loop_1_sec(void)
 	if (rd_inst.humid_mode == STD_ON && rd_inst.furnace_mode != FURNACE_OFF &&
 	    !humid_holdoff) {
 		if (heat_cool_state == STD_ON) {
-			gpiod_line_set_value(bulk.lines[GPIO_HUMID_FAN], 1);
+			cd_inst.humid_fan = STD_OFF;
 			humid_duty = rd_inst.furnace_mode == FURNACE_HEAT ? 20 : 10;
 		} else {
-			gpiod_line_set_value(bulk.lines[GPIO_HUMID_FAN], 0);
+			cd_inst.humid_fan = STD_ON;
 			humid_duty = 10;
 		}
 
 		if (humid_cnt == 0)
-			gpiod_line_set_value(bulk.lines[GPIO_HUMID_VALVE], 0);
+			cd_inst.humid_valve = STD_ON;
 		else if (humid_cnt >= humid_duty)
-			gpiod_line_set_value(bulk.lines[GPIO_HUMID_VALVE], 1);
+			cd_inst.humid_valve = STD_OFF;
 		humid_cnt = (humid_cnt + 1) % 30;
 	} else {
-		gpiod_line_set_value(bulk.lines[GPIO_HUMID_FAN], 1);
-		gpiod_line_set_value(bulk.lines[GPIO_HUMID_VALVE], 1);
+		cd_inst.humid_fan = STD_OFF;
+		cd_inst.humid_valve = STD_OFF;
 		humid_cnt = 0;
 	}
 
 	if (humid_holdoff)
 		humid_holdoff--;
 	else {
-		gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_CLOSE], 1);
-		gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_OPEN], 1);
+		cd_inst.humid_d_close = STD_OFF;
+		cd_inst.humid_d_open = STD_OFF;
 	}
 
 	if (rd_inst.sync == 1) {
@@ -594,6 +616,14 @@ int loop_1_sec(void)
 		rd_inst.sync--;
 
 	pthread_mutex_unlock(&rd_mutex);
+
+	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], !cd_inst.furnace_blow);
+	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], !cd_inst.furnace_heat);
+	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], !cd_inst.furnace_cool);
+	gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_CLOSE], !cd_inst.humid_d_close);
+	gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_OPEN], !cd_inst.humid_d_open);
+	gpiod_line_set_value(bulk.lines[GPIO_HUMID_FAN], !cd_inst.humid_fan);
+	gpiod_line_set_value(bulk.lines[GPIO_HUMID_VALVE], !cd_inst.humid_valve);
 
 	return 0;
 }
@@ -648,6 +678,39 @@ int cv_hdlr_sensor_data_get(struct mg_connection *conn, void *cbdata)
 
 const mg_request_handler cv_hmap_sensor_data[NUM_HTTP_METHODS] = {
 	[HTTP_GET]	= cv_hdlr_sensor_data_get,
+};
+
+int cv_hdlr_ctrl_data_get(struct mg_connection *conn, void *cbdata)
+{
+	struct ctrl_data cd;
+	cJSON *rsp = cJSON_CreateObject();
+
+	pthread_mutex_lock(&rd_mutex);
+	cd = cd_inst;
+	pthread_mutex_unlock(&rd_mutex);
+
+	cJSON_AddItemToObject(rsp, "furnace_blow",
+			      cJSON_CreateString(std_on_off_map[cd.furnace_blow]));
+	cJSON_AddItemToObject(rsp, "furnace_heat",
+			      cJSON_CreateString(std_on_off_map[cd.furnace_heat]));
+	cJSON_AddItemToObject(rsp, "furnace_cool",
+			      cJSON_CreateString(std_on_off_map[cd.furnace_cool]));
+	cJSON_AddItemToObject(rsp, "humid_d_close",
+			      cJSON_CreateString(std_on_off_map[cd.humid_d_close]));
+	cJSON_AddItemToObject(rsp, "humid_d_open",
+			      cJSON_CreateString(std_on_off_map[cd.humid_d_open]));
+	cJSON_AddItemToObject(rsp, "humid_fan",
+			      cJSON_CreateString(std_on_off_map[cd.humid_fan]));
+	cJSON_AddItemToObject(rsp, "humid_valve",
+			      cJSON_CreateString(std_on_off_map[cd.humid_valve]));
+
+	cv_write_json(conn, rsp);
+
+	return 200;
+}
+
+const mg_request_handler cv_hmap_ctrl_data[NUM_HTTP_METHODS] = {
+	[HTTP_GET]	= cv_hdlr_ctrl_data_get,
 };
 
 int cv_hdlr_run_data_get(struct mg_connection *conn, void *cbdata)
@@ -801,6 +864,7 @@ int worker(void)
 		(int)cfg_get_number("http_port", 1, 65535, 8080));
 	cv_ctx = mg_start(&cv_cbk, NULL, cv_opt);
 	mg_set_request_handler(cv_ctx, "/api/rundata", cv_hdlr_api, (void *)cv_hmap_run_data);
+	mg_set_request_handler(cv_ctx, "/api/ctrldata", cv_hdlr_api, (void *)cv_hmap_ctrl_data);
 	mg_set_request_handler(cv_ctx, "/api/sensordata", cv_hdlr_api, (void *)cv_hmap_sensor_data);
 
 	tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);

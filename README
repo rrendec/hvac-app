@@ -60,5 +60,6 @@ sudo civetweb -A /usr/local/etc/hvac/htpasswd api user 1234
 
 # Web API examples
 curl -i -u user:1234 --digest http://localhost:8080/api/sensordata
+curl -i -u user:1234 --digest http://localhost:8080/api/ctrldata
 curl -i -u user:1234 --digest http://localhost:8080/api/rundata
 curl -i -u user:1234 --digest -X POST -d '{"furnace_mode": "heat"}' -H "Content-Type: application/json" http://localhost:8080/api/rundata
