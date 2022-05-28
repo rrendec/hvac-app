@@ -615,19 +615,10 @@ long long cv_read_buf(struct mg_connection *conn, void *buf, long long blen)
 	return tlen;
 }
 
-int cv_hdlr_sensor_data_get(struct mg_connection *conn, void *cbdata)
+void cv_write_json(struct mg_connection *conn, cJSON *rsp_json)
 {
-	struct sensor_data sd;
-	cJSON *rsp_json = cJSON_CreateObject();
 	char *rsp_str;
 	unsigned long len;
-
-	pthread_mutex_lock(&sd_mutex);
-	sd = sd_snap;
-	pthread_mutex_unlock(&sd_mutex);
-
-	cJSON_AddItemToObject(rsp_json, "temp_avg", cJSON_CreateNumber(sd.temp_avg / 10.0));
-	cJSON_AddItemToObject(rsp_json, "humid_avg", cJSON_CreateNumber(sd.humid_avg / 10.0));
 
 	rsp_str = cJSON_Print(rsp_json);
 	cJSON_Delete(rsp_json);
@@ -636,6 +627,21 @@ int cv_hdlr_sensor_data_get(struct mg_connection *conn, void *cbdata)
 	mg_send_http_ok(conn, "application/json", len);
 	mg_write(conn, rsp_str, len);
 	free(rsp_str);
+}
+
+int cv_hdlr_sensor_data_get(struct mg_connection *conn, void *cbdata)
+{
+	struct sensor_data sd;
+	cJSON *rsp = cJSON_CreateObject();
+
+	pthread_mutex_lock(&sd_mutex);
+	sd = sd_snap;
+	pthread_mutex_unlock(&sd_mutex);
+
+	cJSON_AddItemToObject(rsp, "temp_avg", cJSON_CreateNumber(sd.temp_avg / 10.0));
+	cJSON_AddItemToObject(rsp, "humid_avg", cJSON_CreateNumber(sd.humid_avg / 10.0));
+
+	cv_write_json(conn, rsp);
 
 	return 200;
 }
@@ -647,32 +653,24 @@ const mg_request_handler cv_hmap_sensor_data[NUM_HTTP_METHODS] = {
 int cv_hdlr_run_data_get(struct mg_connection *conn, void *cbdata)
 {
 	struct run_data rd;
-	cJSON *rsp_json = cJSON_CreateObject();
-	char *rsp_str;
-	unsigned long len;
+	cJSON *rsp = cJSON_CreateObject();
 
 	pthread_mutex_lock(&rd_mutex);
 	rd = rd_inst;
 	pthread_mutex_unlock(&rd_mutex);
 
-	cJSON_AddItemToObject(rsp_json, "furnace_mode",
+	cJSON_AddItemToObject(rsp, "furnace_mode",
 			      cJSON_CreateString(rd_furnace_map[rd.furnace_mode]));
-	cJSON_AddItemToObject(rsp_json, "humid_mode",
+	cJSON_AddItemToObject(rsp, "humid_mode",
 			      cJSON_CreateString(std_on_off_map[rd.humid_mode]));
-	cJSON_AddItemToObject(rsp_json, "temp_sp_heat",
+	cJSON_AddItemToObject(rsp, "temp_sp_heat",
 			      cJSON_CreateNumber(rd.temp_sp_heat / 10.0));
-	cJSON_AddItemToObject(rsp_json, "temp_sp_cool",
+	cJSON_AddItemToObject(rsp, "temp_sp_cool",
 			      cJSON_CreateNumber(rd.temp_sp_cool / 10.0));
-	cJSON_AddItemToObject(rsp_json, "humid_sp",
+	cJSON_AddItemToObject(rsp, "humid_sp",
 			      cJSON_CreateNumber(rd.humid_sp / 10.0));
 
-	rsp_str = cJSON_Print(rsp_json);
-	cJSON_Delete(rsp_json);
-
-	len = strlen(rsp_str);
-	mg_send_http_ok(conn, "application/json", len);
-	mg_write(conn, rsp_str, len);
-	free(rsp_str);
+	cv_write_json(conn, rsp);
 
 	return 200;
 }
