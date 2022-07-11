@@ -365,17 +365,13 @@ int sensor_read(modbus_t *mb, struct sensor_data *data)
 	xassert(!rc, goto read2, "%d", errno);
 
 	usleep(10000);
-	rc = modbus_read_registers(mb, 136, 2, reg);
+	rc = modbus_read_registers(mb, 0, 2, reg);
 	xassert(rc != -1, ret = errno, "%d", errno);
-	data->temp1 = reg[0];
-	data->humid1 = reg[1];
-
-	usleep(10000);
-	rc = modbus_read_registers(mb, 184, 1, reg);
-	xassert(rc != -1, ret = errno, "%d", errno);
-	data->aq = reg[0];
+	data->temp1 = reg[1];
+	data->humid1 = reg[0];
 
 read2:
+#if 0
 	rc = modbus_set_slave(mb, 2);
 	xassert(!rc, return errno, "%d", errno);
 
@@ -384,12 +380,18 @@ read2:
 	xassert(rc != -1, ret = errno, "%d", errno);
 	data->temp2 = reg[0] + 9; // FIXME: hard-coded calibration
 	data->humid2 = reg[1] - 44; // FIXME: hard-coded calibration
+#endif
 
 	if (ret)
 		return ret;
 
+#if 0
 	data->temp_avg = (data->temp1 + 3 * data->temp2) / 4;
 	data->humid_avg = (data->humid1 + 3 * data->humid2) / 4;
+#else
+	data->temp_avg = data->temp1;
+	data->humid_avg = data->humid1;
+#endif
 	data->valid = 1;
 
 	return 0;
@@ -436,7 +438,7 @@ int modbus_init(void)
 {
 	int rc;
 
-	mb = modbus_new_rtu("/dev/ttyUSB0", 115200, 'N', 8, 1);
+	mb = modbus_new_rtu("/dev/ttyUSB0", 9600, 'N', 8, 1);
 	xassert(mb, return errno, "%d", errno);
 
 	rc = modbus_connect(mb);
