@@ -371,16 +371,14 @@ int sensor_read(modbus_t *mb, struct sensor_data *data)
 	data->humid1 = reg[0];
 
 read2:
-#if 0
 	rc = modbus_set_slave(mb, 2);
 	xassert(!rc, return errno, "%d", errno);
 
-	usleep(10000);
+	usleep(200000);
 	rc = modbus_read_registers(mb, 34, 2, reg);
 	xassert(rc != -1, ret = errno, "%d", errno);
-	data->temp2 = reg[0] + 9; // FIXME: hard-coded calibration
-	data->humid2 = reg[1] - 44; // FIXME: hard-coded calibration
-#endif
+	data->temp2 = reg[0];
+	data->humid2 = reg[1];
 
 	if (ret)
 		return ret;
