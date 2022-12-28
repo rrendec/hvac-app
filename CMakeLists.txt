@@ -4,7 +4,10 @@ project(hvac)
 
 option(WITH_EMULATOR "Enable emulator support" OFF)
 
-add_compile_options(-Wall -Werror)
+set(board_type "rpi-bare" CACHE STRING "Board type to build for")
+set_property(CACHE board_type PROPERTY STRINGS rpi-bare)
+
+add_compile_options(-Wall -Werror -include board-${board_type}.h)
 
 set(hvac_SOURCES src/main.c)
 set(hvac_LIBS civetweb cjson)
@@ -15,6 +18,7 @@ else()
 endif()
 
 add_executable(hvac ${hvac_SOURCES})
+target_include_directories(hvac PRIVATE include)
 target_link_libraries(hvac ${hvac_LIBS})
 
 install(TARGETS hvac DESTINATION bin)
