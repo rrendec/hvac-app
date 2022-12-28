@@ -1,7 +1,7 @@
 #ifndef __HVAC_BOARD_RPI_BARE_H__
 #define __HVAC_BOARD_RPI_BARE_H__
 
-#define GPIO_CHIP_NAME "gpiochip0"
+#define GPIO_CHIP_LABEL "pinctrl-bcm2835"
 
 #define GPIO_MAP_INITIALIZER {							\
 	[GPIO_FURNACE_BLOW]	= 17,	/* GPIO_GEN0 */				\

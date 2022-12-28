@@ -1,22 +1,22 @@
 # chip_id line_offset value
 
-# GPIO_GEN0: Furnace blow (G)
-1 17 1
+# P00: Furnace blow (G)
+1 0 1
 
-# GPIO_GEN1: Furnace heat (W)
-1 18 1
+# P01: Furnace heat (W)
+1 1 1
 
-# GPIO_GEN2: Furnace cool (Y)
-1 27 1
+# P02: Furnace cool (Y)
+1 2 1
 
-# GPIO_GEN4: Humidifier damper close
-1 23 1
-
-# GPIO_GEN5: Humidifier damper open
-1 24 1
-
-# GPIO_GEN6: Humidifier fan
-1 25 1
-
-# GPCLK0: Humidifier valve
+# P04: Humidifier damper close
 1 4 1
+
+# P05: Humidifier damper open
+1 5 1
+
+# P06: Humidifier fan
+1 6 1
+
+# P07: Humidifier valve
+1 7 1
