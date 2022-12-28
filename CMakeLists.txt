@@ -4,8 +4,8 @@ project(hvac)
 
 option(WITH_EMULATOR "Enable emulator support" OFF)
 
-set(board_type "rpi-bare" CACHE STRING "Board type to build for")
-set_property(CACHE board_type PROPERTY STRINGS rpi-bare)
+set(board_type "rpi-hvac" CACHE STRING "Board type to build for")
+set_property(CACHE board_type PROPERTY STRINGS rpi-bare rpi-hvac)
 
 add_compile_options(-Wall -Werror -include board-${board_type}.h)
 

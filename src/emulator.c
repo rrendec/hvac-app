@@ -21,7 +21,7 @@ struct gpiod_line;
 
 static const char * const gpio_path = "emu/gpio.txt";
 
-struct gpiod_chip *gpiod_chip_open_by_name(const char *name)
+struct gpiod_chip *gpiod_chip_open_by_label(const char *label)
 {
 	return (struct gpiod_chip *)1UL;
 }

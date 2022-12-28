@@ -404,7 +404,7 @@ int gpio_init(void)
 {
 	int i, rc;
 
-	chip = gpiod_chip_open_by_name(GPIO_CHIP_NAME);
+	chip = gpiod_chip_open_by_label(GPIO_CHIP_LABEL);
 	xassert(chip, return errno, "%d", errno);
 
 	rc = gpiod_chip_get_lines(chip, gpio_pin_map, NUM_GPIO_PINS, &bulk);
