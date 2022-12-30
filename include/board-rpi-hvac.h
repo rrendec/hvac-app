@@ -11,6 +11,10 @@
 	[GPIO_HUMID_D_OPEN]	= 5,	/* P05 */				\
 	[GPIO_HUMID_FAN]	= 6,	/* P06 */				\
 	[GPIO_HUMID_VALVE]	= 7,	/* P07 */				\
+	[GPIO_ERV_OFF]		= 8,	/* P10 */				\
+	[GPIO_ERV_RECIRC]	= 9,	/* P11 */				\
+	[GPIO_ERV_LOW]		= 10,	/* P12 */				\
+	[GPIO_ERV_HIGH]		= 11,	/* P13 */				\
 }
 
 #endif
