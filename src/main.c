@@ -29,6 +29,17 @@ enum furnace_mode {
 	FURNACE_MAX = FURNACE_COOL
 };
 
+enum erv_mode {
+	ERV_OFF,
+	ERV_RECIRC,	// Recirculate
+	ERV_I20MH,	// Intermittent - 20 min/hour
+	ERV_I30MH,	// Intermittent - 30 min/hour
+	ERV_I40MH,	// Intermittent - 40 min/hour
+	ERV_LOW,	// Always on, low speed
+	ERV_HIGH,	// Always on, high speed
+	ERV_MAX = ERV_HIGH
+};
+
 enum std_on_off {
 	STD_OFF,
 	STD_ON,
@@ -39,6 +50,7 @@ enum std_on_off {
 struct run_data {
 	enum furnace_mode furnace_mode;
 	enum std_on_off humid_mode;
+	enum erv_mode erv_mode;
 	int temp_sp_heat;
 	int temp_sp_cool;
 	int temp_thres;
@@ -57,6 +69,10 @@ struct ctrl_data {
 	enum std_on_off humid_d_open;
 	enum std_on_off humid_fan;
 	enum std_on_off humid_valve;
+	enum std_on_off erv_off;
+	enum std_on_off erv_recirc;
+	enum std_on_off erv_low;
+	enum std_on_off erv_high;
 };
 
 /* Sensor data - raw and computed */
@@ -82,6 +98,10 @@ enum gpio_pins {
 	GPIO_HUMID_D_OPEN,
 	GPIO_HUMID_FAN,
 	GPIO_HUMID_VALVE,
+	GPIO_ERV_OFF,
+	GPIO_ERV_RECIRC,
+	GPIO_ERV_LOW,
+	GPIO_ERV_HIGH,
 	NUM_GPIO_PINS
 };
 
@@ -105,6 +125,16 @@ const char * const rd_furnace_map[] = {
 	[FURNACE_COOL]	= "cool",
 };
 
+const char * const rd_erv_map[] = {
+	[ERV_OFF]	= "off",
+	[ERV_RECIRC]	= "recirc",
+	[ERV_I20MH]	= "i20mh",
+	[ERV_I30MH]	= "i30mh",
+	[ERV_I40MH]	= "i40mh",
+	[ERV_LOW]	= "low",
+	[ERV_HIGH]	= "high",
+};
+
 const char * const std_on_off_map[] = {
 	[STD_OFF]	= "off",
 	[STD_ON]	= "on",
@@ -113,6 +143,15 @@ const char * const std_on_off_map[] = {
 const char * const http_method_map[] = {
 	[HTTP_GET]	= "GET",
 	[HTTP_POST]	= "POST",
+};
+
+const struct {
+	int run_time_s;
+	int off_time_s;
+} erv_int_map[ERV_MAX] = {
+	[ERV_I20MH] = {20 * 60, 40 * 60},
+	[ERV_I30MH] = {30 * 60, 30 * 60},
+	[ERV_I40MH] = {40 * 60, 20 * 60},
 };
 
 cJSON *config;
@@ -136,6 +175,7 @@ pthread_mutex_t sd_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* run data below */
 struct run_data rd_inst = {
 	.furnace_mode = FURNACE_OFF,
+	.erv_mode = ERV_OFF,
 	.temp_sp_heat = 220,	// 22.0 C
 	.temp_sp_cool = 250,	// 25.0 C
 	.temp_thres = 5,	// 0.5 C
@@ -149,6 +189,10 @@ struct ctrl_data cd_inst = {
 	.humid_d_open = STD_OFF,
 	.humid_fan = STD_OFF,
 	.humid_valve = STD_OFF,
+	.erv_off = STD_ON,
+	.erv_recirc = STD_OFF,
+	.erv_low = STD_OFF,
+	.erv_high = STD_OFF,
 };
 pthread_mutex_t rd_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* end of run data */
@@ -294,6 +338,8 @@ int nvram_read(void)
 		0, FURNACE_MAX, rd_inst.furnace_mode);
 	rd_inst.humid_mode = json_get_number(json, "humid_mode",
 		0, STD_ON, rd_inst.humid_mode);
+	rd_inst.erv_mode = json_get_number(json, "erv_mode",
+		0, ERV_MAX, rd_inst.erv_mode);
 	rd_inst.temp_sp_heat = json_get_number(json, "temp_sp_heat",
 		TEMP_SP_HEAT_MIN, TEMP_SP_HEAT_MAX, rd_inst.temp_sp_heat);
 	rd_inst.temp_sp_cool = json_get_number(json, "temp_sp_cool",
@@ -323,6 +369,7 @@ int nvram_write(void)
 
 	cJSON_AddItemToObject(json, "furnace_mode", cJSON_CreateNumber(rd_inst.furnace_mode));
 	cJSON_AddItemToObject(json, "humid_mode", cJSON_CreateNumber(rd_inst.humid_mode));
+	cJSON_AddItemToObject(json, "erv_mode", cJSON_CreateNumber(rd_inst.erv_mode));
 	cJSON_AddItemToObject(json, "temp_sp_heat", cJSON_CreateNumber(rd_inst.temp_sp_heat));
 	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(rd_inst.temp_sp_cool));
 	cJSON_AddItemToObject(json, "humid_sp", cJSON_CreateNumber(rd_inst.humid_sp));
@@ -473,8 +520,11 @@ int loop_1_sec(void)
 	static enum std_on_off heat_cool_state = STD_OFF;
 	static int sens_cnt, sens_fail, humid_cnt, humid_duty;
 	static int old_furnace_mode = FURNACE_OFF;
+	static int old_erv_mode = ERV_OFF;
 	static int old_humid_mode = INT_MAX;
 	static int furnace_holdoff, humid_holdoff;
+	static enum std_on_off erv_state;
+	static int erv_timer;
 
 	struct sensor_data sd = {.valid = 0};
 
@@ -564,6 +614,58 @@ int loop_1_sec(void)
 		break;
 	}
 
+	if (rd_inst.erv_mode != old_erv_mode) {
+		xprintf(SD_NOTICE "ERV mode: %s\n",
+			rd_erv_map[rd_inst.erv_mode]);
+		erv_state = STD_ON;
+		erv_timer = 0;
+		old_erv_mode = rd_inst.erv_mode;
+	}
+
+
+	switch (rd_inst.erv_mode) {
+	case ERV_OFF:
+		cd_inst.erv_off = STD_ON;
+		cd_inst.erv_recirc = STD_OFF;
+		cd_inst.erv_low = STD_OFF;
+		cd_inst.erv_high = STD_OFF;
+		break;
+	case ERV_RECIRC:
+		cd_inst.erv_off = STD_OFF;
+		cd_inst.erv_recirc = STD_ON;
+		cd_inst.erv_low = STD_OFF;
+		cd_inst.erv_high = STD_OFF;
+		break;
+	case ERV_I20MH:
+	case ERV_I30MH:
+	case ERV_I40MH:
+		if (erv_timer > 0)
+			erv_timer--;
+		else {
+			erv_state = !erv_state;
+			erv_timer = erv_state ?
+				    erv_int_map[rd_inst.erv_mode].run_time_s:
+				    erv_int_map[rd_inst.erv_mode].off_time_s;
+		}
+		cd_inst.erv_off = STD_OFF;
+		cd_inst.erv_recirc = STD_OFF;
+		cd_inst.erv_low = erv_state;
+		cd_inst.erv_high = STD_OFF;
+		break;
+	case ERV_LOW:
+		cd_inst.erv_off = STD_OFF;
+		cd_inst.erv_recirc = STD_OFF;
+		cd_inst.erv_low = STD_ON;
+		cd_inst.erv_high = STD_OFF;
+		break;
+	case ERV_HIGH:
+		cd_inst.erv_off = STD_OFF;
+		cd_inst.erv_recirc = STD_OFF;
+		cd_inst.erv_low = STD_OFF;
+		cd_inst.erv_high = STD_ON;
+		break;
+	}
+
 	if (rd_inst.humid_mode != old_humid_mode && !humid_holdoff) {
 		xprintf(SD_NOTICE "Humidifier mode: %s\n",
 			std_on_off_map[rd_inst.humid_mode]);
@@ -616,6 +718,10 @@ int loop_1_sec(void)
 	gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_OPEN], !cd_inst.humid_d_open);
 	gpiod_line_set_value(bulk.lines[GPIO_HUMID_FAN], !cd_inst.humid_fan);
 	gpiod_line_set_value(bulk.lines[GPIO_HUMID_VALVE], !cd_inst.humid_valve);
+	gpiod_line_set_value(bulk.lines[GPIO_ERV_OFF], !cd_inst.erv_off);
+	gpiod_line_set_value(bulk.lines[GPIO_ERV_RECIRC], !cd_inst.erv_recirc);
+	gpiod_line_set_value(bulk.lines[GPIO_ERV_LOW], !cd_inst.erv_low);
+	gpiod_line_set_value(bulk.lines[GPIO_ERV_HIGH], !cd_inst.erv_high);
 
 	return 0;
 }
@@ -695,6 +801,14 @@ int cv_hdlr_ctrl_data_get(struct mg_connection *conn, void *cbdata)
 			      cJSON_CreateString(std_on_off_map[cd.humid_fan]));
 	cJSON_AddItemToObject(rsp, "humid_valve",
 			      cJSON_CreateString(std_on_off_map[cd.humid_valve]));
+	cJSON_AddItemToObject(rsp, "erv_off",
+			      cJSON_CreateString(std_on_off_map[cd.erv_off]));
+	cJSON_AddItemToObject(rsp, "erv_recirc",
+			      cJSON_CreateString(std_on_off_map[cd.erv_recirc]));
+	cJSON_AddItemToObject(rsp, "erv_low",
+			      cJSON_CreateString(std_on_off_map[cd.erv_low]));
+	cJSON_AddItemToObject(rsp, "erv_high",
+			      cJSON_CreateString(std_on_off_map[cd.erv_high]));
 
 	cv_write_json(conn, rsp);
 
@@ -716,6 +830,8 @@ int cv_hdlr_run_data_get(struct mg_connection *conn, void *cbdata)
 
 	cJSON_AddItemToObject(rsp, "furnace_mode",
 			      cJSON_CreateString(rd_furnace_map[rd.furnace_mode]));
+	cJSON_AddItemToObject(rsp, "erv_mode",
+			      cJSON_CreateString(rd_erv_map[rd.erv_mode]));
 	cJSON_AddItemToObject(rsp, "humid_mode",
 			      cJSON_CreateString(std_on_off_map[rd.humid_mode]));
 	cJSON_AddItemToObject(rsp, "temp_sp_heat",
@@ -758,6 +874,10 @@ int cv_hdlr_run_data_post(struct mg_connection *conn, void *cbdata)
 	if ((idx = json_map_string(req, "furnace_mode", NULL, rd_furnace_map)) >= 0) {
 		chg |= rd_inst.furnace_mode != idx;
 		rd_inst.furnace_mode = idx;
+	}
+	if ((idx = json_map_string(req, "erv_mode", NULL, rd_erv_map)) >= 0) {
+		chg |= rd_inst.erv_mode != idx;
+		rd_inst.erv_mode = idx;
 	}
 	if ((idx = json_map_string(req, "humid_mode", NULL, std_on_off_map)) >= 0) {
 		chg |= rd_inst.humid_mode != idx;
