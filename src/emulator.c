@@ -43,6 +43,24 @@ int gpiod_chip_get_lines(struct gpiod_chip *chip,
 int gpiod_line_request_output(struct gpiod_line *line,
 			      const char *consumer, int default_val)
 {
+	gpiod_line_set_value(line, default_val);
+
+	return 0;
+}
+
+int gpiod_line_request_bulk_output(struct gpiod_line_bulk *bulk,
+				   const char *consumer,
+				   const int *default_vals)
+{
+	int i, rc;
+
+	for (i = 0; i < bulk->num_lines; i++) {
+		rc = gpiod_line_request_output(bulk->lines[i], consumer,
+					       default_vals[i]);
+		if (rc)
+			return rc;
+	}
+
 	return 0;
 }
 
@@ -110,6 +128,19 @@ out_unlink:
 		unlink(tmp);
 
 	return ret;
+}
+
+int gpiod_line_set_value_bulk(struct gpiod_line_bulk *bulk, const int *values)
+{
+	int i, rc;
+
+	for (i = 0; i < bulk->num_lines; i++) {
+		rc = gpiod_line_set_value(bulk->lines[i], values[i]);
+		if (rc)
+			return rc;
+	}
+
+	return 0;
 }
 
 void gpiod_line_release_bulk(struct gpiod_line_bulk *bulk)

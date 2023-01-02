@@ -157,6 +157,7 @@ const struct {
 cJSON *config;
 
 unsigned int gpio_pin_map[NUM_GPIO_PINS] = GPIO_MAP_INITIALIZER;
+const int gpio_def_val[NUM_GPIO_PINS] = {[0 ... NUM_GPIO_PINS - 1] = 1};
 
 volatile int keep_going = 1;
 volatile pid_t child_pid;
@@ -443,13 +444,13 @@ void sig_hdlr(int signal)
 }
 
 /**
- * @note gpiod_line_request_output() additionally sets the pin state. The side
- *       effect is that we initialize the output pins in a clean state. For
- *       example, the furnace is turned off.
+ * @note gpiod_line_request_bulk_output() additionally sets the pin state.
+ *       The side effect is that we initialize the output pins in a clean
+ *       state. For example, the furnace is turned off by default.
  */
 int gpio_init(void)
 {
-	int i, rc;
+	int rc;
 
 	chip = gpiod_chip_open_by_label(GPIO_CHIP_LABEL);
 	xassert(chip, return errno, "%d", errno);
@@ -457,10 +458,8 @@ int gpio_init(void)
 	rc = gpiod_chip_get_lines(chip, gpio_pin_map, NUM_GPIO_PINS, &bulk);
 	xassert(!rc, return errno, "%d", errno);
 
-	for (i = 0; i < NUM_GPIO_PINS; i++) {
-		rc = gpiod_line_request_output(bulk.lines[i], "hvac", 1);
-		xassert(!rc, return errno, "%d", errno);
-	}
+	rc = gpiod_line_request_bulk_output(&bulk, "hvac", gpio_def_val);
+	xassert(!rc, return errno, "%d", errno);
 
 	return 0;
 }
@@ -513,6 +512,32 @@ int sensors_once(void)
 	modbus_cleanup();
 
 	return 0;
+}
+
+/*
+ * There is no locking around cd_inst because cd_inst is modified only in
+ * loop_1_sec(), which always runs in the same thread, and we are called only
+ * from that function.
+ */
+void gpio_state_sync(void)
+{
+	const int values[NUM_GPIO_PINS] = {
+		[GPIO_FURNACE_BLOW]	= !cd_inst.furnace_blow,
+		[GPIO_FURNACE_HEAT]	= !cd_inst.furnace_heat,
+		[GPIO_FURNACE_COOL]	= !cd_inst.furnace_cool,
+		[GPIO_HUMID_D_CLOSE]	= !cd_inst.humid_d_close,
+		[GPIO_HUMID_D_OPEN]	= !cd_inst.humid_d_open,
+		[GPIO_HUMID_FAN]	= !cd_inst.humid_fan,
+		[GPIO_HUMID_VALVE]	= !cd_inst.humid_valve,
+		[GPIO_ERV_OFF]		= !cd_inst.erv_off,
+		[GPIO_ERV_RECIRC]	= !cd_inst.erv_recirc,
+		[GPIO_ERV_LOW]		= !cd_inst.erv_low,
+		[GPIO_ERV_HIGH]		= !cd_inst.erv_high,
+	};
+
+	int rc = gpiod_line_set_value_bulk(&bulk, values);
+
+	xassert(!rc, (void)0, "%d", errno);
 }
 
 int loop_1_sec(void)
@@ -711,17 +736,15 @@ int loop_1_sec(void)
 
 	pthread_mutex_unlock(&rd_mutex);
 
-	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_BLOW], !cd_inst.furnace_blow);
-	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_HEAT], !cd_inst.furnace_heat);
-	gpiod_line_set_value(bulk.lines[GPIO_FURNACE_COOL], !cd_inst.furnace_cool);
-	gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_CLOSE], !cd_inst.humid_d_close);
-	gpiod_line_set_value(bulk.lines[GPIO_HUMID_D_OPEN], !cd_inst.humid_d_open);
-	gpiod_line_set_value(bulk.lines[GPIO_HUMID_FAN], !cd_inst.humid_fan);
-	gpiod_line_set_value(bulk.lines[GPIO_HUMID_VALVE], !cd_inst.humid_valve);
-	gpiod_line_set_value(bulk.lines[GPIO_ERV_OFF], !cd_inst.erv_off);
-	gpiod_line_set_value(bulk.lines[GPIO_ERV_RECIRC], !cd_inst.erv_recirc);
-	gpiod_line_set_value(bulk.lines[GPIO_ERV_LOW], !cd_inst.erv_low);
-	gpiod_line_set_value(bulk.lines[GPIO_ERV_HIGH], !cd_inst.erv_high);
+	/*
+	 * Sync the GPIO pin state outside the critical region. There is no
+	 * other writer and we always run in the same thread, so the data is
+	 * guaranteed to be consistent outside the critical region. On the
+	 * other hand, the GPIO pins are on an IO expander that is connected
+	 * over I2C, so setting the pin state takes time. Avoid holding the
+	 * mutex when we don't really need it.
+	 */
+	gpio_state_sync();
 
 	return 0;
 }
@@ -958,7 +981,7 @@ int worker(void)
 		NULL
 	};
 
-	int i, rc, tfd;
+	int rc, tfd;
 	struct mg_context *cv_ctx;
 
 	rc = nvram_read();
@@ -1023,8 +1046,8 @@ out_stop:
 	 * Turn the furnace off. GPIO pins keep their state, and we must make
 	 * sure we don't leave heating or cooling running.
 	 */
-	for (i = 0; i < NUM_GPIO_PINS; i++)
-		gpiod_line_set_value(bulk.lines[i], 1);
+	rc = gpiod_line_set_value_bulk(&bulk, gpio_def_val);
+	xassert(!rc, (void)0, "%d", errno);
 
 	gpio_cleanup();
 	modbus_cleanup();
