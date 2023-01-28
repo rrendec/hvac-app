@@ -1,6 +1,5 @@
 #define _GNU_SOURCE
 
-#include <stdio.h>
 #include <errno.h>
 #include <assert.h>
 #include <string.h>
@@ -8,7 +7,6 @@
 #include <gpiod.h>
 #include <time.h>
 #include <signal.h>
-#include <pthread.h>
 #include <fcntl.h>
 #include <math.h>
 #include <sys/types.h>
@@ -153,6 +151,7 @@ const struct {
 	[ERV_I40MH] = {40 * 60, 20 * 60},
 };
 
+pthread_mutex_t oestream_mutex = PTHREAD_MUTEX_INITIALIZER;
 cJSON *config;
 
 unsigned int gpio_pin_map[NUM_GPIO_PINS] = GPIO_MAP_INITIALIZER;

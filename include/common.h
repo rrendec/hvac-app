@@ -1,20 +1,24 @@
 #ifndef __HVAC_COMMON_H__
 #define __HVAC_COMMON_H__
 
+#include <stdio.h>
 #include <errno.h>
+#include <pthread.h>
 #include <systemd/sd-daemon.h>
 
-#define xprintf(...) do {							\
-	printf(__VA_ARGS__);							\
-	fflush(stdout);								\
-} while (0)
+extern pthread_mutex_t oestream_mutex;
 
 #define xfprintf(stream, ...) do {						\
+	int __errno = errno;							\
 	FILE *__stream = (stream);						\
+	pthread_mutex_lock(&oestream_mutex);					\
 	fprintf(__stream, __VA_ARGS__);						\
 	fflush(__stream);							\
+	pthread_mutex_unlock(&oestream_mutex);					\
+	errno = __errno;							\
 } while (0)
 
+#define xprintf(...) xfprintf(stdout, __VA_ARGS__)
 #define xprerrf(...) xfprintf(stderr, __VA_ARGS__)
 
 #define first_arg(arg, ...) arg
@@ -22,12 +26,10 @@
 
 #define xassert(condition, fallback, ...) do {					\
 	if (!(condition)) {							\
-		int __errno = errno;						\
 		xprerrf(SD_ERR "Assertion '%s' failed in %s() [%s:%d]"		\
 			__VA_OPT__(": " first_arg(__VA_ARGS__)) "\n",		\
 			#condition, __func__, __FILE__, __LINE__		\
 			__VA_OPT__(shift_arg(__VA_ARGS__)));			\
-		errno = __errno;						\
 		fallback;							\
 	}									\
 } while (0)
