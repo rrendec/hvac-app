@@ -17,6 +17,7 @@
 
 #include "common.h"
 #include "json.h"
+#include "telemetry.h"
 
 enum furnace_mode {
 	FURNACE_OFF,
@@ -153,6 +154,7 @@ const struct {
 
 pthread_mutex_t oestream_mutex = PTHREAD_MUTEX_INITIALIZER;
 cJSON *config;
+cJSON *telemetry_cfg;
 
 unsigned int gpio_pin_map[NUM_GPIO_PINS] = GPIO_MAP_INITIALIZER;
 const int gpio_def_val[NUM_GPIO_PINS] = {[0 ... NUM_GPIO_PINS - 1] = 1};
@@ -432,6 +434,49 @@ void gpio_state_sync(void)
 	xassert(!rc, (void)0, "%d", errno);
 }
 
+static int telemetry_prep_send(struct timeval tv,
+				const struct run_data *rd,
+				const struct ctrl_data *cd,
+				const struct sensor_data *sd)
+{
+	const struct telemetry_data td = {
+		.tv = tv,
+
+		.run = {
+			.furnace_mode = rd->furnace_mode,
+			.humid_mode = rd->humid_mode,
+			.erv_mode = rd->erv_mode,
+			.temp_sp_heat = rd->temp_sp_heat / 10.0f,
+			.temp_sp_cool = rd->temp_sp_cool / 10.0f,
+			.temp_thres = rd->temp_thres / 10.0f,
+			.humid_sp = rd->humid_sp / 10.0f,
+		},
+
+		.ctrl = {
+			.furnace_blow = cd->furnace_blow,
+			.furnace_heat = cd->furnace_heat,
+			.furnace_cool = cd->furnace_cool,
+			.humid_d_close = cd->humid_d_close,
+			.humid_d_open = cd->humid_d_open,
+			.humid_fan = cd->humid_fan,
+			.humid_valve = cd->humid_valve,
+			.erv_off = cd->erv_off,
+			.erv_recirc = cd->erv_recirc,
+			.erv_low = cd->erv_low,
+			.erv_high = cd->erv_high,
+		},
+
+		.sens = {
+			.temp1 = sd->temp1 / 10.0f,
+			.humid1 = sd->humid1 / 10.0f,
+			.temp2 = sd->temp2 / 10.0f,
+			.humid2 = sd->humid2 / 10.0f,
+		},
+	};
+
+	return telemetry_send(&td);
+}
+
 int loop_1_sec(void)
 {
 	static enum std_on_off heat_cool_state = STD_OFF;
@@ -444,6 +489,10 @@ int loop_1_sec(void)
 	static int erv_timer;
 
 	struct sensor_data sd = {.valid = 0};
+	struct run_data rd_snap;
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
 
 	if (sens_cnt) {
 		sens_cnt = (sens_cnt + 1) % 5;
@@ -626,6 +675,7 @@ int loop_1_sec(void)
 	} else if (rd_inst.sync)
 		rd_inst.sync--;
 
+	rd_snap = rd_inst;
 	pthread_mutex_unlock(&rd_mutex);
 
 	/*
@@ -637,6 +687,9 @@ int loop_1_sec(void)
 	 * mutex when we don't really need it.
 	 */
 	gpio_state_sync();
+
+	if (telemetry_cfg)
+		telemetry_prep_send(tv, &rd_snap, &cd_inst, &sd);
 
 	return 0;
 }
@@ -900,6 +953,11 @@ int worker(void)
 	rc = timerfd_settime(tfd, 0, &its, NULL);
 	xassert(rc != -1, goto out_clo_tfd, "%d", errno);
 
+	if (telemetry_cfg) {
+		rc = telemetry_init(telemetry_cfg);
+		xassert(!rc, goto out_clo_tfd, "%d", rc);
+	}
+
 	while (keep_going) {
 		uint64_t overruns = 0;
 
@@ -920,6 +978,10 @@ int worker(void)
 	}
 
 	xprintf(SD_INFO "Shutting down...\n");
+
+	if (telemetry_cfg)
+		telemetry_exit();
+
 out_clo_tfd:
 	close(tfd);
 out_stop:
@@ -956,6 +1018,8 @@ int parse_config(const char *path)
 		xprerrf("%s: Parse error at line %d column %d\n", path, l, c);
 	} else if (rc) {
 		xprerrf("%s: %s\n", path, strerror(rc));
+	} else {
+		telemetry_cfg = cJSON_GetObjectItem(config, "telemetry");
 	}
 
 	return rc;
