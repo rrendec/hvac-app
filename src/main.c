@@ -499,7 +499,7 @@ int loop_1_sec(void)
 		sd = sd_snap;
 	} else if (sensor_read(mb, &sd)) {
 		if (sens_fail++ >= 30) {
-			xprintf(SD_ERR, "Sensor failure\n");
+			xprintf(SD_ERR "Sensor failure\n");
 			return 1;
 		}
 	} else {
