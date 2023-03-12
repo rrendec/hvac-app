@@ -4,6 +4,8 @@
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/queue.h>
@@ -11,6 +13,9 @@
 #include "telemetry.h"
 #include "common.h"
 #include "json.h"
+
+#define TLM_CONNECT_TIMEOUT_S	5
+#define TLM_CONNECT_RETRY_S	60
 
 struct tlm_q_entry {
 	struct telemetry_data data;
@@ -25,7 +30,59 @@ static pthread_cond_t tlm_q_cond = PTHREAD_COND_INITIALIZER;
 static SIMPLEQ_HEAD(tlm_q_head, tlm_q_entry) tlm_q_head = SIMPLEQ_HEAD_INITIALIZER(tlm_q_head);
 static int tlm_q_count;
 
-static void resolve_and_connect(const char *host, const char *port)
+static int connect_one(const struct addrinfo *ap)
+{
+	int rc, fl, opt;
+	struct pollfd fds = {.events = POLLOUT};
+	socklen_t len = sizeof(opt);
+
+	sfd = socket(ap->ai_family, ap->ai_socktype, ap->ai_protocol);
+	xassert(sfd != -1, return -1, "%d", errno);
+
+	fl = fcntl(sfd, F_GETFL, NULL);
+	xassert(fl >= 0, goto out_close, "%d", errno);
+
+	rc = fcntl(sfd, F_SETFL, fl | O_NONBLOCK);
+	xassert(!rc, goto out_close, "%d", errno);
+
+	rc = TEMP_FAILURE_RETRY(connect(sfd, ap->ai_addr, ap->ai_addrlen));
+	if (!rc)
+		return 0;
+
+	if (errno != EINPROGRESS)
+		goto out_close;
+
+	fds.fd = sfd;
+	rc = poll(&fds, 1, TLM_CONNECT_TIMEOUT_S * 1000);
+	xassert(rc >= 0, goto out_close, "%d", errno);
+
+	if (!rc) {
+		errno = ETIMEDOUT;
+		goto out_close;
+	}
+
+	xassert(fds.revents & POLLOUT, goto out_close, "%d", fds.revents);
+
+	rc = getsockopt(sfd, SOL_SOCKET, SO_ERROR, &opt, &len);
+	xassert(!rc, goto out_close, "%d", errno);
+
+	if (opt) {
+		xprerrf(SD_DEBUG "Connect failed: %d\n", opt);
+		errno = opt;
+		goto out_close;
+	}
+
+	return 0;
+
+out_close:
+	rc = errno;
+	close(sfd);
+	errno = rc;
+
+	return -1;
+}
+
+static void connect_loop(const char *host, const char *port)
 {
 	static const struct addrinfo hints = {
 		.ai_family = AF_UNSPEC,
@@ -40,23 +97,18 @@ static void resolve_and_connect(const char *host, const char *port)
 		xassert(!rc, ares = NULL, "%d %d", rc, errno);
 
 		for (ap = ares; ap; ap = ap->ai_next) {
-			sfd = socket(ap->ai_family, ap->ai_socktype, ap->ai_protocol);
-			xassert(sfd != -1, continue, "%d", errno);
+			if (connect_one(ap))
+				continue;
 
-			rc = connect(sfd, ap->ai_addr, ap->ai_addrlen);
-			if (!rc) {
-				freeaddrinfo(ares);
-				xprintf(SD_INFO "Connected to %s:%s\n", host, port);
-				return;
-			}
-
-			close(sfd);
+			freeaddrinfo(ares);
+			xprintf(SD_INFO "Connected to %s:%s\n", host, port);
+			return;
 		}
 
 		freeaddrinfo(ares);
 		xprerrf(SD_NOTICE "Connect to %s:%s failed: %d\n", host, port, errno);
 
-		sleep(60);
+		sleep(TLM_CONNECT_RETRY_S);
 	}
 }
 
@@ -167,7 +219,7 @@ static void *tlm_main(void *arg)
 
 	pthread_cleanup_push(cleanup_hdlr, NULL);
 	while (rc != ENOTRECOVERABLE) {
-		resolve_and_connect(host, pstr);
+		connect_loop(host, pstr);
 		while (!(rc = dequeue_and_send()));
 	}
 	pthread_cleanup_pop(1);
