@@ -1,34 +1,93 @@
 body.mainbody
 {
     margin: 6px 6px 4px 6px;
-    background-color:white;
-    font-size:13px;
+    background-color: white;
+    font-size: 13px;
     font-family: Arial, Verdana sans;
 }
 
-table.hvac
+table.hvac, table.hvac_tabs, table.hvac_status
 {
-    width:98%;
-    margin-left:1%;
-    font:12px  Arial, Verdana, Helvetica, sans-serif;
-    border:1px solid #0189d7;
-    width:600px;
-    margin-top:5px;
-    background-color:white;
-    margin-left:auto;
-    margin-right:auto;
+    font: 40px Arial, Verdana, Helvetica, sans-serif;
+    border: 1px solid #0189d7;
+    width: 600px;
+    margin-top: 5px;
+    background-color: white;
+    margin-left: auto;
+    margin-right: auto;
 }
 
-table.hvac td
+table.hvac td, table.hvac_tabs td
 {
-    padding-left:5px;
-    padding-right:5px;
-    padding-top:3px;
-    padding-bottom:3px;
-    text-align:left;
+    padding-left: 5px;
+    padding-right: 5px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    text-align: left;
 }
 
-input, textarea, select,  input.checkbox
+table.hvac_status td
+{
+    padding-left: 5px;
+    padding-right: 5px;
+    padding-top: 5px;
+    text-align: center;
+}
+
+table.hvac_tabs td
+{
+    text-align: center;
+}
+
+td.tab
+{
+    border: 1px solid #ccc;
+}
+
+textarea, select,  input.checkbox
 {
     border: 1px solid #aaa;
+}
+
+#heat, #cool, #erv, #settings, #outside
+{
+  filter: grayscale(100%);
+}
+
+img.hvac_img
+{
+    width: 50px;
+    height: 50px;
+}
+
+img.hvac_rad
+{
+    width: 30px;
+    height: 30px;
+}
+
+#hvac_settings, #hvac_outside
+{
+    display: none;
+    cursor: pointer;
+}
+
+table.hvac td.hvac_temp, table.hvac td.hvac_humid, table.hvac td.hvac_aq,
+table.hvac #heat_act, table.hvac #cool_act,table.hvac #erv_act
+{
+    text-align: center;
+}
+
+input
+{
+     appearance: none;
+     border-radius: 50%;
+     width: 35px;
+     height: 35px;
+     border: 2px solid #999;
+}
+
+input:checked
+{
+    border: 18px solid green;
 }

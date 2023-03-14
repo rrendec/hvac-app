@@ -2,36 +2,80 @@
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
 <head>
   <title>HVAC</title>
-  <link type="text/css" rel="stylesheet" href="css/index.css"/>
+  <link type="text/css" rel="stylesheet" href="css/main.css"/>
   <script src="js/main.js"></script>
 </head>
-  <body>
-    <table class="hvac" cellspacing="0" cellpadding="0">
+  <body class="mainbody">
+    <table class="hvac_tabs" cellspacing="0" cellpadding="0">
       <tr>
-        <td colspan="2">Current data:</td>
+        <td class="tab"><img id="home" onclick="changeTab('home')" src="images/home-svgrepo-com.svg" alt="House" width=100 height=100 /></td>
+        <td class="separator">&nbsp;</td>
+        <td class="tab"><img id="outside" onclick="changeTab('outside')" src="images/trees-tree-svgrepo-com.svg" alt="Trees" width=100 height=100 /></td>
+        <td class="separator">&nbsp;</td>
+        <td class="tab"><img id="settings" onclick="changeTab('settings')" src="images/settings-svgrepo-com.svg" alt="Settings" width=100 height=100 /></td>
+      </tr>
+    </table>
+    <table id="hvac_home" class="hvac" cellspacing="0" cellpadding="0">
+      <tr>
+        <td class="hvac_temp"><img class="hvac_img" src="images/thermometer-svgrepo-com.svg" /></td>
+        <td class=hvac_temp_val" id="temp_avg">22.5 C</td>
+        <td class="">&nbsp;</td>
       </tr>
       <tr>
-        <td class="hvac_temp">Temp</td>
-        <td class="hvac_temp_val" id="temp_avg"></td>
+        <td class="hvac_humid"><img class="hvac_img" src="images/drops-water-svgrepo-com.svg" /></td>
+        <td class="hvac_humid_val" id="humid_avg">34.8 %</td>
+        <td class="">&nbsp;</td>
       </tr>
       <tr>
-        <td class="hvac_humid">Humid</td>
-        <td class="hvac_humid_val" id="humid_avg"></td>
+        <td class="hvac_aq"><img class="hvac_img" src="images/flasks-svgrepo-com.svg" /></td>
+        <td class="hvac_aq_val" id="aq_avg">108</td>
+        <td class="">&nbsp;</td>
+      </tr>
+    </table>
+    <table class="hvac_status" id="hvac_status_tbl" cellspacing="0" cellpadding="0">
+      <tr>
+        <td class="hvac"><img class="hvac_rad" id="heat" src="images/fire-svgrepo-com.svg" />HEAT</td>
+        <td class="hvac"><img class="hvac_rad" id="cool" src="images/snowflake-svgrepo-com.svg" />COOL</td>
+        <td class="hvac"><img class="hvac_rad" id="cool" src="images/propeller-svgrepo-com.svg" />ERV</td>
       </tr>
       <tr>
-        <td colspan="2">Set data / Change default values:</td>
+        <td id="heat_act" class="hvac"><input id="heat_act" type="radio" class="hvac_rad"></td>
+        <td id="cool_act" class="hvac"><input id="cool_act" type="radio" class="hvac_rad"></td>
+        <td id="erv_act" class="hvac"><input id="erv_act" type="radio" class="hvac_rad"></td>
+      </tr>
+    </table>
+    <table id="hvac_outside" class="hvac" cellspacing="0" cellpadding="0">
+      <tr>
+        <td class="hvac_temp"><img class="hvac_img" src="images/thermometer-svgrepo-com.svg" /></td>
+        <td class="hvac_temp_val" id="temp_avg">5.2 C</td>
       </tr>
       <tr>
-        <td class="hvac_temp">Temp</td>
-        <td class="hvac_temp_val">
-          <input type="text" id="set_temp" name="temp" onChange="setParam('/xhr/data', this, 'temp')">
-        </td>
+        <td class="hvac_humid"><img class="hvac_img" src="images/drops-water-svgrepo-com.svg" /></td>
+        <td class="hvac_humid_val" id="humid_avg">28.8 %</td>
       </tr>
       <tr>
-        <td class="hvac_humid">Humid</td>
-        <td class="hvac_humid_val">
-          <input id="set_humid" type="text" name="humid" onChange="setParam('/xhr/data', this, 'humid')">
-        </td>
+        <td class="hvac_aq"><img class="hvac_img" src="images/flasks-svgrepo-com.svg" /></td>
+        <td class="hvac_aq_val" id="aq_avg">120</td>
+      </tr>
+      <tr>
+        <td colspan="2" class="hvac_devices"></td>
+      </tr>
+    </table>
+    <table id="hvac_settings" class="hvac" cellspacing="0" cellpadding="0">
+      <tr>
+        <td class="hvac_temp"><img class="hvac_img" src="images/thermometer-svgrepo-com.svg" /></td>
+        <td class="hvac_temp_val" id="temp_avg">22.0 C</td>
+      </tr>
+      <tr>
+        <td class="hvac_humid"><img class="hvac_img" src="images/drops-water-svgrepo-com.svg" /></td>
+        <td class="hvac_humid_val" id="humid_avg">35.0 %</td>
+      </tr>
+      <tr>
+        <td class="hvac_aq"><img class="hvac_img" src="images/propeller-svgrepo-com.svg" /></td>
+        <td class="hvac_aq_val" id="aq_avg">20 min/h</td>
+      </tr>
+      <tr>
+        <td colspan="2" class="hvac_devices"></td>
       </tr>
     </table>
   </body>

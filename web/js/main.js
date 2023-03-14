@@ -57,4 +57,22 @@ function finishSettingParam()
     } catch(e) {return;}
 }
 
+function changeTab(tableId)
+{
+    var tabs = ["home","outside","settings"];
+    for (var tab in tabs) {
+        if (tabs[tab] == tableId) {
+            document.getElementById("hvac_"+tableId).style.display = "table";//"block";
+            document.getElementById(tableId).style.filter = "none";
+            if (tableId=="home")
+                document.getElementById("hvac_status_tbl").style.display = "table";
+            else
+                document.getElementById("hvac_status_tbl").style.display = "none";
+        } else {
+            document.getElementById("hvac_"+tabs[tab]).style.display = "none";
+            document.getElementById(tabs[tab]).style.filter = "grayscale(100%)";
+        }
+    }
+}
+
 setTimeout(getParams, 1000, "/api/sensordata");
