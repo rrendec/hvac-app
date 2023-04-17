@@ -8,6 +8,10 @@ sudo apt install cmake libmodbus-dev libgpiod-dev libsystemd-dev civetweb libciv
 
 ## Install required packages (Fedora)
 
+```
+sudo dnf install cmake libmodbus-devel libgpiod-devel systemd-devel cjson-devel
+```
+
 ### civetweb
 
 Get the source code:
