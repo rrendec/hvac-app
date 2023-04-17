@@ -8,14 +8,17 @@
 #include <poll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/queue.h>
 
 #include "telemetry.h"
 #include "common.h"
 #include "json.h"
 
-#define TLM_CONNECT_TIMEOUT_S	5
-#define TLM_CONNECT_RETRY_S	60
+#define TLM_CONNECT_TIMEOUT_S	10
+#define TLM_CONNECT_RETRY_S	20
+#define TLM_SOCKET_TIMEOUT_S	20
 
 struct tlm_q_entry {
 	struct telemetry_data data;
@@ -86,6 +89,10 @@ static int connect_one(const struct addrinfo *ap)
 	}
 
 connect_ok:
+	opt = TLM_SOCKET_TIMEOUT_S * 1000;
+	rc = setsockopt(sfd, IPPROTO_TCP, TCP_USER_TIMEOUT, &opt, sizeof(opt));
+	xassert(!rc, goto out_close, "%d", errno);
+
 	xprintf(SD_DEBUG "Connected to [%s]:%s\n", host, serv);
 
 	return 0;
@@ -171,7 +178,7 @@ static int format_data(char **buf, size_t *len, const struct telemetry_data *d)
 
 static int dequeue_and_send(void)
 {
-	int rc;
+	int rc, ret;
 	char *buf, *ptr;
 	size_t len;
 	struct tlm_q_entry *entry;
@@ -199,7 +206,7 @@ static int dequeue_and_send(void)
 	tlm_q_count--;
 
 	rc = pthread_mutex_unlock(&tlm_q_mutex);
-	xassert(!rc, return ENOTRECOVERABLE, "%d", rc);
+	xassert(!rc, goto out_free_entry, "%d", rc);
 
 	/*
 	 * No race condition here, because cancellation is deferred
@@ -209,19 +216,48 @@ static int dequeue_and_send(void)
 
 	rc = format_data(&buf, &len, &entry->data);
 	free(entry);
-	xassert(!rc, return rc, "%d", rc);
-	for (ptr = buf; ptr < buf + len; ptr += rc) {
+	xassert(!rc, return ENOTRECOVERABLE, "%d", rc);
+
+	/*
+	 * If the peer closes the connection, poll() returns 0x1c (POLLOUT |
+	 * POLLERR | POLLHUP) [see /usr/include/bits/poll.h] in revents, then
+	 * write() fails with EPIPE. TBD if it makes sense to catch this early
+	 * and avoid the extra call to write().
+	 *
+	 * If the link is severed (e.g. server dies abruptly or network issue),
+	 * poll() still returns 0x1c in revents, then write() fails with
+	 * ETIMEDOUT.
+	 */
+	for (ptr = buf, ret = ENOTRECOVERABLE; ptr < buf + len; ptr += rc) {
+		struct pollfd fds = {.fd = sfd, .events = POLLOUT};
+
+		rc = TEMP_FAILURE_RETRY(poll(&fds, 1, TLM_SOCKET_TIMEOUT_S * 1000));
+		xassert(rc != -1, goto out_free_buf, "%d", errno);
+
+		if (!rc) {
+			ret = ETIMEDOUT;
+			goto out_free_buf;
+		}
+
 		rc = TEMP_FAILURE_RETRY(write(sfd, ptr, buf + len - ptr));
 		if (rc <= 0) {
-			free(buf);
-			xprintf(SD_ERR "Lost telemetry connection: %d %d\n",
-				rc, errno);
-			return rc ? (errno ? errno : EIO) : EIO;
+			xprerrf(SD_DEBUG "Write failed: %d %d %x\n", rc, errno, fds.revents);
+			ret = rc ? (errno ? errno : EIO) : EIO;
+			goto out_free_buf;
 		}
 	}
-	free(buf);
 
-	return 0;
+	ret = 0;
+
+out_free_buf:
+	if (ret)
+		xprintf(SD_ERR "Lost telemetry connection: %d\n", ret);
+	free(buf);
+	return ret;
+
+out_free_entry:
+	free(entry);
+	return ENOTRECOVERABLE;
 }
 
 static void *tlm_main(void *arg)
