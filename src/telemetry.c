@@ -35,6 +35,16 @@ static int connect_one(const struct addrinfo *ap)
 	int rc, fl, opt;
 	struct pollfd fds = {.events = POLLOUT};
 	socklen_t len = sizeof(opt);
+	char host[NI_MAXHOST];
+	char serv[NI_MAXSERV];
+
+	rc = getnameinfo(ap->ai_addr, ap->ai_addrlen,
+			 host, sizeof(host), serv, sizeof(serv),
+			 NI_NUMERICHOST | NI_NUMERICSERV);
+	if (rc) {
+		snprintf(host, sizeof(host), "?");
+		snprintf(serv, sizeof(serv), "<%d>", rc);
+	}
 
 	sfd = socket(ap->ai_family, ap->ai_socktype, ap->ai_protocol);
 	xassert(sfd != -1, return -1, "%d", errno);
@@ -47,16 +57,19 @@ static int connect_one(const struct addrinfo *ap)
 
 	rc = TEMP_FAILURE_RETRY(connect(sfd, ap->ai_addr, ap->ai_addrlen));
 	if (!rc)
-		return 0;
+		goto connect_ok;
 
-	if (errno != EINPROGRESS)
+	if (errno != EINPROGRESS) {
+		xprerrf(SD_DEBUG "Connect to [%s]:%s failed: %d\n", host, serv, errno);
 		goto out_close;
+	}
 
 	fds.fd = sfd;
 	rc = poll(&fds, 1, TLM_CONNECT_TIMEOUT_S * 1000);
 	xassert(rc >= 0, goto out_close, "%d", errno);
 
 	if (!rc) {
+		xprerrf(SD_DEBUG "Connect to [%s]:%s timed out\n", host, serv);
 		errno = ETIMEDOUT;
 		goto out_close;
 	}
@@ -67,10 +80,13 @@ static int connect_one(const struct addrinfo *ap)
 	xassert(!rc, goto out_close, "%d", errno);
 
 	if (opt) {
-		xprerrf(SD_DEBUG "Connect failed: %d\n", opt);
+		xprerrf(SD_DEBUG "Connect to [%s]:%s failed: %d\n", host, serv, opt);
 		errno = opt;
 		goto out_close;
 	}
+
+connect_ok:
+	xprintf(SD_DEBUG "Connected to [%s]:%s\n", host, serv);
 
 	return 0;
 
