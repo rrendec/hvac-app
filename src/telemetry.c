@@ -221,6 +221,7 @@ static void *tlm_main(void *arg)
 	while (rc != ENOTRECOVERABLE) {
 		connect_loop(host, pstr);
 		while (!(rc = dequeue_and_send()));
+		close(sfd);
 	}
 	pthread_cleanup_pop(1);
 
