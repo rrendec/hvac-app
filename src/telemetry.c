@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <math.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -167,10 +168,14 @@ static int format_data(char **buf, size_t *len, const struct telemetry_data *d)
 	fprintf(f, "hvac.ctrl.erv_recirc %u %lld\n", d->ctrl.erv_recirc, ts);
 	fprintf(f, "hvac.ctrl.erv_low %u %lld\n", d->ctrl.erv_low, ts);
 	fprintf(f, "hvac.ctrl.erv_high %u %lld\n", d->ctrl.erv_high, ts);
-	fprintf(f, "hvac.sens.th1.temp %.1f %lld\n", d->sens.temp1, ts);
-	fprintf(f, "hvac.sens.th1.humid %.1f %lld\n", d->sens.humid1, ts);
-	fprintf(f, "hvac.sens.th2.temp %.1f %lld\n", d->sens.temp2, ts);
-	fprintf(f, "hvac.sens.th2.humid %.1f %lld\n", d->sens.humid2, ts);
+	if (!isnan(d->sens.temp1))
+		fprintf(f, "hvac.sens.th1.temp %.1f %lld\n", d->sens.temp1, ts);
+	if (!isnan(d->sens.humid1))
+		fprintf(f, "hvac.sens.th1.humid %.1f %lld\n", d->sens.humid1, ts);
+	if (!isnan(d->sens.temp2))
+		fprintf(f, "hvac.sens.th2.temp %.1f %lld\n", d->sens.temp2, ts);
+	if (!isnan(d->sens.humid2))
+		fprintf(f, "hvac.sens.th2.humid %.1f %lld\n", d->sens.humid2, ts);
 	fclose(f);
 
 	return 0;

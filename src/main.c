@@ -439,7 +439,7 @@ static int telemetry_prep_send(struct timeval tv,
 				const struct ctrl_data *cd,
 				const struct sensor_data *sd)
 {
-	const struct telemetry_data td = {
+	struct telemetry_data td = {
 		.tv = tv,
 
 		.run = {
@@ -467,12 +467,19 @@ static int telemetry_prep_send(struct timeval tv,
 		},
 
 		.sens = {
-			.temp1 = sd->temp1 / 10.0f,
-			.humid1 = sd->humid1 / 10.0f,
-			.temp2 = sd->temp2 / 10.0f,
-			.humid2 = sd->humid2 / 10.0f,
+			.temp1 = NAN,
+			.humid1 = NAN,
+			.temp2 = NAN,
+			.humid2 = NAN,
 		},
 	};
+
+	if (sd->valid) {
+		td.sens.temp1 = sd->temp1 / 10.0f;
+		td.sens.humid1 = sd->humid1 / 10.0f;
+		td.sens.temp2 = sd->temp2 / 10.0f;
+		td.sens.humid2 = sd->humid2 / 10.0f;
+	}
 
 	return telemetry_send(&td);
 }
