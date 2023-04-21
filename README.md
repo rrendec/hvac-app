@@ -1,3 +1,53 @@
+hvac-app
+========
+
+This is the source code component of an embedded HVAC controller. The hardware
+design component is [hvac-eda](https://github.com/rrendec/hvac-eda).
+
+The system is designed to run on a Raspberry Pi, and I am currently using it to
+control the HVAC in my home. Some aspects of the system are hard-coded into the
+source code, such as the external sensors and their Modbus addresses/registers.
+Using different parts (or a different setup) would require improving the code to
+allow further customization through the configuration file or modifying the code
+directly.
+
+## Features
+
+Currently, the system implements the functions of a basic thermostat, an ERV
+controller, and a humidifier controller, with minimal correlation between the
+three of them. The goal is to create a smarter controller by adding correlation
+to optimize the energy consumption and overall system efficiency.
+
+The following features/functions are already implemented:
+* Reading of external temperature/humidity sensors over Modbus.
+* Basic thermostat control with dual heat/cool mode and distinct setpoints for
+  cooling and heating.
+* Basic HRV/ERV control with fixed recirculation/intermittent/low/high settings.
+* Basic humidifier control with a single humidity setpoint and water flow
+  control though water valve pulse length modulation.
+* Embedded JSON based REST API over HTTP for controlling the run mode (heating,
+  cooling, etc.), adjusting the setpoints, and reading status and sensor data.
+* Embedded HTML/JavaScript web UI for controlling the system.
+* Data telemetry to an external time-series database for graphic visualization,
+  logging and analysis purposes. Currently [graphite](https://graphiteapp.org/)
+  is supported.
+* Built-in emulator (of the sensors and control peripherals) that allows the
+  code to be run and tested on any standard system.
+
+## Motivation
+
+* What happens in my home stays in my home. Most (all?) commercially available
+  solutions share anything and everything they can with the cloud service of
+  their manufacturer. And yes, privacy *does* matter.
+* The ability to control the HVAC in my home even if my internet connection
+  stops working.
+* The ability to integrate all HVAC subsystems (furnace/ERV/humidifier) into a
+  single centralized controller to optimize energy consumption and overall
+  system efficiency.
+* The ability to fiddle with the control algorithms, experiment and improve.
+* To have fun. I am a professional software designer, but also an electronics
+  hobbyist and enthusiast.
+
 # Prerequisites
 
 ## Install required packages (Debian/Ubuntu/Raspbian)
