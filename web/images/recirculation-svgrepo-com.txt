@@ -1,0 +1,5 @@
+Author: game-icons.net
+URL: https://www.svgrepo.com/svg/320638/cycle
+X-svgrepo-license-name: CC Attribution
+X-svgrepo-license-URL: https://www.svgrepo.com/page/licensing#CC%20Attribution
+X-derived-work: yes

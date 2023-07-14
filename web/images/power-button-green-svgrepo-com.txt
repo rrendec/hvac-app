@@ -1,0 +1,5 @@
+Author: Icooon Mono
+URL: https://www.svgrepo.com/svg/478098/power-material
+X-svgrepo-license-name: PD
+X-svgrepo-license-URL: https://www.svgrepo.com/page/licensing#PD
+X-derived-work: yes

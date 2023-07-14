@@ -1,0 +1,5 @@
+Author: healthicons
+URL: https://www.svgrepo.com/svg/326201/high-bars
+X-svgrepo-license-name: PD
+X-svgrepo-license-URL: https://www.svgrepo.com/page/licensing#PD
+X-derived-work: yes
