@@ -930,6 +930,7 @@ int worker(void)
 	const char *cv_opt[] = {
 		"document_root", cfg_get_string("document_root", "web"),
 		"listening_ports", http_port,
+		"num_threads", "10",
 		NULL
 	};
 
