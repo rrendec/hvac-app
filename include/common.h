@@ -36,4 +36,26 @@ extern pthread_mutex_t oestream_mutex;
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
+#define __CHECK_CANCELED(variable, handler, flags) do {				\
+	if (variable) {								\
+		void *__result = handler(flags);				\
+		variable = 0;							\
+		pthread_exit(__result);						\
+	}									\
+} while (0)
+
+#define CHECK_CANCELED(flags) __CHECK_CANCELED(canceled, cancel_hdlr, flags)
+
+#define __RETRY_NC(expression, variable, handler, flags) ({			\
+	long int __rc;								\
+	do {									\
+		__rc = (long int)(expression);					\
+		__CHECK_CANCELED(variable, handler, flags);			\
+	} while (__rc == -1L && errno == EINTR);				\
+	__rc;									\
+})
+
+#define RETRY_NC(expression, flags)						\
+	__RETRY_NC(expression, canceled, cancel_hdlr, flags)
+
 #endif

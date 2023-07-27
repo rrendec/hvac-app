@@ -3,6 +3,7 @@
 #include <netdb.h>
 #include <errno.h>
 #include <unistd.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -27,12 +28,28 @@ struct tlm_q_entry {
 };
 
 static volatile int sfd = -1;
-static volatile int is_locked;
+static volatile int canceled;
 static pthread_t tlm_thr;
 static pthread_mutex_t tlm_q_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t tlm_q_cond = PTHREAD_COND_INITIALIZER;
 static SIMPLEQ_HEAD(tlm_q_head, tlm_q_entry) tlm_q_head = SIMPLEQ_HEAD_INITIALIZER(tlm_q_head);
 static int tlm_q_count;
+
+enum tlm_cancel_flags {
+	CF_LOCK = 1,
+	CF_SOCK = 2,
+};
+
+static void *cancel_hdlr(enum tlm_cancel_flags flags)
+{
+	if ((flags & CF_LOCK))
+		pthread_mutex_unlock(&tlm_q_mutex);
+
+	if ((flags & CF_SOCK))
+		close(sfd);
+
+	return NULL;
+}
 
 static int connect_one(const struct addrinfo *ap)
 {
@@ -59,7 +76,7 @@ static int connect_one(const struct addrinfo *ap)
 	rc = fcntl(sfd, F_SETFL, fl | O_NONBLOCK);
 	xassert(!rc, goto out_close, "%d", errno);
 
-	rc = TEMP_FAILURE_RETRY(connect(sfd, ap->ai_addr, ap->ai_addrlen));
+	rc = RETRY_NC(connect(sfd, ap->ai_addr, ap->ai_addrlen), CF_SOCK);
 	if (!rc)
 		goto connect_ok;
 
@@ -69,7 +86,7 @@ static int connect_one(const struct addrinfo *ap)
 	}
 
 	fds.fd = sfd;
-	rc = poll(&fds, 1, TLM_CONNECT_TIMEOUT_S * 1000);
+	rc = RETRY_NC(poll(&fds, 1, TLM_CONNECT_TIMEOUT_S * 1000), CF_SOCK);
 	xassert(rc >= 0, goto out_close, "%d", errno);
 
 	if (!rc) {
@@ -133,15 +150,8 @@ static void connect_loop(const char *host, const char *port)
 		xprerrf(SD_NOTICE "Connect to %s:%s failed: %d\n", host, port, errno);
 
 		sleep(TLM_CONNECT_RETRY_S);
+		CHECK_CANCELED(0);
 	}
-}
-
-static void cleanup_hdlr(void *arg)
-{
-	if (is_locked)
-		pthread_mutex_unlock(&tlm_q_mutex);
-
-	close(sfd);
 }
 
 static int format_data(char **buf, size_t *len, const struct telemetry_data *d)
@@ -191,18 +201,9 @@ static int dequeue_and_send(void)
 	rc = pthread_mutex_lock(&tlm_q_mutex);
 	xassert(!rc, return ENOTRECOVERABLE, "%d", rc);
 
-	/*
-	 * No race condition here, because cancellation is deferred
-	 * and pthread_mutex_lock is not a cancellation point.
-	 */
-	is_locked = 1;
-
-	/*
-	 * If the thread is cancelled while waiting, the mutex is
-	 * reacquired before the cancellation handlers run.
-	 */
 	while (SIMPLEQ_EMPTY(&tlm_q_head)) {
 		rc = pthread_cond_wait(&tlm_q_cond, &tlm_q_mutex);
+		CHECK_CANCELED(CF_LOCK);
 		xassert(!rc, return ENOTRECOVERABLE, "%d", rc);
 	}
 
@@ -212,12 +213,6 @@ static int dequeue_and_send(void)
 
 	rc = pthread_mutex_unlock(&tlm_q_mutex);
 	xassert(!rc, goto out_free_entry, "%d", rc);
-
-	/*
-	 * No race condition here, because cancellation is deferred
-	 * and pthread_mutex_unlock is not a cancellation point.
-	 */
-	is_locked = 0;
 
 	rc = format_data(&buf, &len, &entry->data);
 	free(entry);
@@ -236,7 +231,7 @@ static int dequeue_and_send(void)
 	for (ptr = buf, ret = ENOTRECOVERABLE; ptr < buf + len; ptr += rc) {
 		struct pollfd fds = {.fd = sfd, .events = POLLOUT};
 
-		rc = TEMP_FAILURE_RETRY(poll(&fds, 1, TLM_SOCKET_TIMEOUT_S * 1000));
+		rc = RETRY_NC(poll(&fds, 1, TLM_SOCKET_TIMEOUT_S * 1000), CF_SOCK);
 		xassert(rc != -1, goto out_free_buf, "%d", errno);
 
 		if (!rc) {
@@ -244,7 +239,7 @@ static int dequeue_and_send(void)
 			goto out_free_buf;
 		}
 
-		rc = TEMP_FAILURE_RETRY(write(sfd, ptr, buf + len - ptr));
+		rc = RETRY_NC(write(sfd, ptr, buf + len - ptr), CF_SOCK);
 		if (rc <= 0) {
 			xprerrf(SD_DEBUG "Write failed: %d %d %x\n", rc, errno, fds.revents);
 			ret = rc ? (errno ? errno : EIO) : EIO;
@@ -274,13 +269,11 @@ static void *tlm_main(void *arg)
 
 	snprintf(pstr, sizeof(pstr), "%d", port);
 
-	pthread_cleanup_push(cleanup_hdlr, NULL);
 	while (rc != ENOTRECOVERABLE) {
 		connect_loop(host, pstr);
 		while (!(rc = dequeue_and_send()));
 		close(sfd);
 	}
-	pthread_cleanup_pop(1);
 
 	return NULL;
 }
@@ -294,8 +287,16 @@ int telemetry_exit(void)
 {
 	int rc;
 
-	rc = pthread_cancel(tlm_thr);
-	xassert(!rc, return rc, "%d", rc);
+	canceled = 1;
+
+	while (canceled) {
+		rc = pthread_cond_signal(&tlm_q_cond);
+		xassert(!rc, return rc, "%d", rc);
+		rc = pthread_kill(tlm_thr, SIGUSR2);
+		xassert(!rc, return rc, "%d", rc);
+		usleep(1000);
+	}
+
 	rc = pthread_join(tlm_thr, NULL);
 	xassert(!rc, return rc, "%d", rc);
 

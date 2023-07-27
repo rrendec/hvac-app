@@ -329,12 +329,22 @@ read2:
 	return 0;
 }
 
-void sig_hdlr(int signal)
+void term_sig_hdlr(int signal)
 {
 	keep_going = 0;
 
 	if (child_pid > 0)
 		kill(child_pid, SIGTERM);
+}
+
+/*
+ * An empty signal handler makes sense because we want potentially blocking
+ * syscalls (e.g. poll()) to be interrupted. They are not interrupted when
+ * the handler is SIG_IGN. The handler MUST be installed using sigaction()
+ * and sa_flags set to 0 to obtain the desired behavior.
+ */
+void usr2_sig_hdlr(int signal)
+{
 }
 
 /**
@@ -1040,7 +1050,8 @@ void global_cleanup(void)
 
 int main(int argc, char **argv)
 {
-	static const struct sigaction act = {.sa_handler = sig_hdlr};
+	static const struct sigaction term_sa = {.sa_handler = term_sig_hdlr};
+	static const struct sigaction usr2_sa = {.sa_handler = usr2_sig_hdlr};
 
 	int opt, rc;
 	int fg = 0, fail = 0, help = 0;
@@ -1081,11 +1092,11 @@ int main(int argc, char **argv)
 		return fail ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 
-	sigaction(SIGINT, &act, NULL);
-	sigaction(SIGQUIT, &act, NULL);
-	sigaction(SIGTERM, &act, NULL);
+	sigaction(SIGINT, &term_sa, NULL);
+	sigaction(SIGQUIT, &term_sa, NULL);
+	sigaction(SIGTERM, &term_sa, NULL);
 	signal(SIGUSR1, SIG_IGN);
-	signal(SIGUSR2, SIG_IGN);
+	sigaction(SIGUSR2, &usr2_sa, NULL);
 
 	if (!fg) {
 		child_pid = fork();
