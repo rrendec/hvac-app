@@ -1,158 +1,30 @@
 #define _GNU_SOURCE
 
-#include <netdb.h>
 #include <errno.h>
 #include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>
-#include <fcntl.h>
 #include <poll.h>
 #include <math.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <sys/queue.h>
 
 #include "telemetry.h"
+#include "network.h"
 #include "common.h"
 #include "json.h"
-
-#define TLM_CONNECT_TIMEOUT_S	10
-#define TLM_CONNECT_RETRY_S	20
-#define TLM_SOCKET_TIMEOUT_S	20
 
 struct tlm_q_entry {
 	struct telemetry_data data;
 	SIMPLEQ_ENTRY(tlm_q_entry) queue;
 };
 
-static volatile int sfd = -1;
-static volatile int canceled;
 static pthread_t tlm_thr;
 static pthread_mutex_t tlm_q_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t tlm_q_cond = PTHREAD_COND_INITIALIZER;
 static SIMPLEQ_HEAD(tlm_q_head, tlm_q_entry) tlm_q_head = SIMPLEQ_HEAD_INITIALIZER(tlm_q_head);
 static int tlm_q_count;
-
-enum tlm_cancel_flags {
-	CF_LOCK = 1,
-	CF_SOCK = 2,
-};
-
-static void *cancel_hdlr(enum tlm_cancel_flags flags)
-{
-	if ((flags & CF_LOCK))
-		pthread_mutex_unlock(&tlm_q_mutex);
-
-	if ((flags & CF_SOCK))
-		close(sfd);
-
-	return NULL;
-}
-
-static int connect_one(const struct addrinfo *ap)
-{
-	int rc, fl, opt;
-	struct pollfd fds = {.events = POLLOUT};
-	socklen_t len = sizeof(opt);
-	char host[NI_MAXHOST];
-	char serv[NI_MAXSERV];
-
-	rc = getnameinfo(ap->ai_addr, ap->ai_addrlen,
-			 host, sizeof(host), serv, sizeof(serv),
-			 NI_NUMERICHOST | NI_NUMERICSERV);
-	if (rc) {
-		snprintf(host, sizeof(host), "?");
-		snprintf(serv, sizeof(serv), "<%d>", rc);
-	}
-
-	sfd = socket(ap->ai_family, ap->ai_socktype, ap->ai_protocol);
-	xassert(sfd != -1, return -1, "%d", errno);
-
-	fl = fcntl(sfd, F_GETFL, NULL);
-	xassert(fl >= 0, goto out_close, "%d", errno);
-
-	rc = fcntl(sfd, F_SETFL, fl | O_NONBLOCK);
-	xassert(!rc, goto out_close, "%d", errno);
-
-	rc = RETRY_NC(connect(sfd, ap->ai_addr, ap->ai_addrlen), CF_SOCK);
-	if (!rc)
-		goto connect_ok;
-
-	if (errno != EINPROGRESS) {
-		xprerrf(SD_DEBUG "Connect to [%s]:%s failed: %d\n", host, serv, errno);
-		goto out_close;
-	}
-
-	fds.fd = sfd;
-	rc = RETRY_NC(poll(&fds, 1, TLM_CONNECT_TIMEOUT_S * 1000), CF_SOCK);
-	xassert(rc >= 0, goto out_close, "%d", errno);
-
-	if (!rc) {
-		xprerrf(SD_DEBUG "Connect to [%s]:%s timed out\n", host, serv);
-		errno = ETIMEDOUT;
-		goto out_close;
-	}
-
-	xassert(fds.revents & POLLOUT, goto out_close, "%d", fds.revents);
-
-	rc = getsockopt(sfd, SOL_SOCKET, SO_ERROR, &opt, &len);
-	xassert(!rc, goto out_close, "%d", errno);
-
-	if (opt) {
-		xprerrf(SD_DEBUG "Connect to [%s]:%s failed: %d\n", host, serv, opt);
-		errno = opt;
-		goto out_close;
-	}
-
-connect_ok:
-	opt = TLM_SOCKET_TIMEOUT_S * 1000;
-	rc = setsockopt(sfd, IPPROTO_TCP, TCP_USER_TIMEOUT, &opt, sizeof(opt));
-	xassert(!rc, goto out_close, "%d", errno);
-
-	xprintf(SD_DEBUG "Connected to [%s]:%s\n", host, serv);
-
-	return 0;
-
-out_close:
-	rc = errno;
-	close(sfd);
-	errno = rc;
-
-	return -1;
-}
-
-static void connect_loop(const char *host, const char *port)
-{
-	static const struct addrinfo hints = {
-		.ai_family = AF_UNSPEC,
-		.ai_socktype = SOCK_STREAM,
-	};
-
-	struct addrinfo *ares, *ap;
-	int rc;
-
-	for (;;) {
-		rc = getaddrinfo(host, port, &hints, &ares);
-		xassert(!rc, ares = NULL, "%d %d", rc, errno);
-
-		for (ap = ares; ap; ap = ap->ai_next) {
-			if (connect_one(ap))
-				continue;
-
-			freeaddrinfo(ares);
-			xprintf(SD_INFO "Connected to %s:%s\n", host, port);
-			return;
-		}
-
-		freeaddrinfo(ares);
-		xprerrf(SD_NOTICE "Connect to %s:%s failed: %d\n", host, port, errno);
-
-		sleep(TLM_CONNECT_RETRY_S);
-		CHECK_CANCELED(0);
-	}
-}
 
 static int format_data(char **buf, size_t *len, const struct telemetry_data *d)
 {
@@ -191,7 +63,7 @@ static int format_data(char **buf, size_t *len, const struct telemetry_data *d)
 	return 0;
 }
 
-static int dequeue_and_send(void)
+static int dequeue_and_send(int sock)
 {
 	int rc, ret;
 	char *buf, *ptr;
@@ -203,8 +75,8 @@ static int dequeue_and_send(void)
 
 	while (SIMPLEQ_EMPTY(&tlm_q_head)) {
 		rc = pthread_cond_wait(&tlm_q_cond, &tlm_q_mutex);
-		CHECK_CANCELED(CF_LOCK);
-		xassert(!rc, return ENOTRECOVERABLE, "%d", rc);
+		CHECK_CANCELED(goto abort_unlock);
+		xassert(!rc, goto abort_unlock, "%d", rc);
 	}
 
 	entry = SIMPLEQ_FIRST(&tlm_q_head);
@@ -212,7 +84,7 @@ static int dequeue_and_send(void)
 	tlm_q_count--;
 
 	rc = pthread_mutex_unlock(&tlm_q_mutex);
-	xassert(!rc, goto out_free_entry, "%d", rc);
+	xassert(!rc, goto abort_free_entry, "%d", rc);
 
 	rc = format_data(&buf, &len, &entry->data);
 	free(entry);
@@ -229,33 +101,37 @@ static int dequeue_and_send(void)
 	 * ETIMEDOUT.
 	 */
 	for (ptr = buf, ret = ENOTRECOVERABLE; ptr < buf + len; ptr += rc) {
-		struct pollfd fds = {.fd = sfd, .events = POLLOUT};
+		struct pollfd fds = {.fd = sock, .events = POLLOUT};
 
-		rc = RETRY_NC(poll(&fds, 1, TLM_SOCKET_TIMEOUT_S * 1000), CF_SOCK);
+		rc = RETRY_NC(poll(&fds, 1, NET_SOCKET_TIMEOUT_S * 1000), goto out_free_buf);
 		xassert(rc != -1, goto out_free_buf, "%d", errno);
 
 		if (!rc) {
 			ret = ETIMEDOUT;
-			goto out_free_buf;
+			goto out_lost;
 		}
 
-		rc = RETRY_NC(write(sfd, ptr, buf + len - ptr), CF_SOCK);
+		rc = RETRY_NC(write(sock, ptr, buf + len - ptr), goto out_free_buf);
 		if (rc <= 0) {
 			xprerrf(SD_DEBUG "Write failed: %d %d %x\n", rc, errno, fds.revents);
 			ret = rc ? (errno ? errno : EIO) : EIO;
-			goto out_free_buf;
+			goto out_lost;
 		}
 	}
 
 	ret = 0;
 
-out_free_buf:
+out_lost:
 	if (ret)
 		xprintf(SD_ERR "Lost telemetry connection: %d\n", ret);
+out_free_buf:
 	free(buf);
 	return ret;
-
-out_free_entry:
+abort_unlock:
+	rc = pthread_mutex_unlock(&tlm_q_mutex);
+	xassert(!rc, NOOP, "%d", rc);
+	return ENOTRECOVERABLE;
+abort_free_entry:
 	free(entry);
 	return ENOTRECOVERABLE;
 }
@@ -265,14 +141,16 @@ static void *tlm_main(void *arg)
 	const char *host = json_get_string(arg, "host", "localhost");
 	int port = json_get_number(arg, "port", 1, 65535, 2003);
 	char pstr[6];
-	int rc = 0;
+	int rc = 0, sock;
 
 	snprintf(pstr, sizeof(pstr), "%d", port);
 
 	while (rc != ENOTRECOVERABLE) {
-		connect_loop(host, pstr);
-		while (!(rc = dequeue_and_send()));
-		close(sfd);
+		sock = net_connect_loop(host, pstr);
+		if (sock < 0)
+			break;
+		while (!(rc = dequeue_and_send(sock)));
+		close(sock);
 	}
 
 	return NULL;
@@ -287,17 +165,26 @@ int telemetry_exit(void)
 {
 	int rc;
 
-	canceled = 1;
-
-	while (canceled) {
-		rc = pthread_cond_signal(&tlm_q_cond);
-		xassert(!rc, return rc, "%d", rc);
+	/*
+	 * The first SIGUSR2 sets the __canceled flag, but the thread may not
+	 * be waiting in a syscall before a checkpoint. Keep sending signals to
+	 * interrupt syscalls, and eventually the thread will reach a checkpoint.
+	 * Since pthread_cond_wait() is not interrupted by signals, signal the
+	 * condition every time, in addition to sending SIGUSR2.
+	 *
+	 * A delay is needed in the loop to give the target process enough time
+	 * to progress. The thread is never ready to be joined immediately, so
+	 * do the delay first, before trying to join.
+	 */
+	do {
 		rc = pthread_kill(tlm_thr, SIGUSR2);
 		xassert(!rc, return rc, "%d", rc);
-		usleep(1000);
-	}
+		rc = pthread_cond_signal(&tlm_q_cond);
+		xassert(!rc, return rc, "%d", rc);
+		usleep(10000);
+		rc = pthread_tryjoin_np(tlm_thr, NULL);
+	} while (rc == EBUSY);
 
-	rc = pthread_join(tlm_thr, NULL);
 	xassert(!rc, return rc, "%d", rc);
 
 	return 0;

@@ -19,6 +19,8 @@
 #include "json.h"
 #include "telemetry.h"
 
+__thread volatile int __canceled;
+
 enum furnace_mode {
 	FURNACE_OFF,
 	FURNACE_FAN,
@@ -337,14 +339,9 @@ void term_sig_hdlr(int signal)
 		kill(child_pid, SIGTERM);
 }
 
-/*
- * An empty signal handler makes sense because we want potentially blocking
- * syscalls (e.g. poll()) to be interrupted. They are not interrupted when
- * the handler is SIG_IGN. The handler MUST be installed using sigaction()
- * and sa_flags set to 0 to obtain the desired behavior.
- */
 void usr2_sig_hdlr(int signal)
 {
+	__canceled = 1;
 }
 
 /**
@@ -441,7 +438,7 @@ void gpio_state_sync(void)
 
 	int rc = gpiod_line_set_value_bulk(&bulk, values);
 
-	xassert(!rc, (void)0, "%d", errno);
+	xassert(!rc, NOOP, "%d", errno);
 }
 
 static int telemetry_prep_send(struct timeval tv,
@@ -1019,7 +1016,7 @@ out_stop:
 	 * sure we don't leave heating or cooling running.
 	 */
 	rc = gpiod_line_set_value_bulk(&bulk, gpio_def_val);
-	xassert(!rc, (void)0, "%d", errno);
+	xassert(!rc, NOOP, "%d", errno);
 
 	gpio_cleanup();
 	modbus_cleanup();
