@@ -1,6 +1,5 @@
 #include <poll.h>
 #include <netdb.h>
-#include <fcntl.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -11,11 +10,10 @@
 
 static int net_connect_one(const struct addrinfo *ap)
 {
-	int rc, sock, fl, opt;
-	struct pollfd fds = {.events = POLLOUT};
-	socklen_t len = sizeof(opt);
+	int rc, sock, opt;
 	char host[NI_MAXHOST];
 	char serv[NI_MAXSERV];
+	struct timeval timeout = {NET_CONNECT_TIMEOUT_S};
 
 	rc = getnameinfo(ap->ai_addr, ap->ai_addrlen,
 			 host, sizeof(host), serv, sizeof(serv),
@@ -28,43 +26,28 @@ static int net_connect_one(const struct addrinfo *ap)
 	sock = socket(ap->ai_family, ap->ai_socktype, ap->ai_protocol);
 	xassert(sock != -1, return -1, "%d", errno);
 
-	fl = fcntl(sock, F_GETFL, NULL);
-	xassert(fl >= 0, goto out_close, "%d", errno);
-
-	rc = fcntl(sock, F_SETFL, fl | O_NONBLOCK);
+	/* Linux specific; see `man 7 socket` */
+	rc = setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 	xassert(!rc, goto out_close, "%d", errno);
 
 	rc = RETRY_NC(connect(sock, ap->ai_addr, ap->ai_addrlen), goto out_close);
-	if (!rc)
-		goto connect_ok;
-
-	if (errno != EINPROGRESS) {
+	if (rc) {
 		xprerrf(SD_DEBUG "Connect to [%s]:%s failed: %d\n", host, serv, errno);
 		goto out_close;
 	}
 
-	fds.fd = sock;
-	rc = RETRY_NC(poll(&fds, 1, NET_CONNECT_TIMEOUT_S * 1000), goto out_close);
-	xassert(rc >= 0, goto out_close, "%d", errno);
-
-	if (!rc) {
-		xprerrf(SD_DEBUG "Connect to [%s]:%s timed out\n", host, serv);
-		errno = ETIMEDOUT;
-		goto out_close;
-	}
-
-	xassert(fds.revents & POLLOUT, goto out_close, "%d", fds.revents);
-
-	rc = getsockopt(sock, SOL_SOCKET, SO_ERROR, &opt, &len);
+	timeout.tv_sec = NET_SOCKET_TIMEOUT_S;
+	rc = setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 	xassert(!rc, goto out_close, "%d", errno);
-
-	if (opt) {
-		xprerrf(SD_DEBUG "Connect to [%s]:%s failed: %d\n", host, serv, opt);
-		errno = opt;
-		goto out_close;
-	}
-
-connect_ok:
+	/*
+	 * FIXME: do we need to set SO_SNDTIMEO to NET_SOCKET_TIMEOUT_S as well?
+	 * Without the TCP_USER_TIMEOUT setting below, a socket write() is still
+	 * successful even when the socket is stuck, because the send buffer is
+	 * large enough.
+	 */
+	timeout.tv_sec = 0;
+	rc = setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+	xassert(!rc, goto out_close, "%d", errno);
 	opt = NET_SOCKET_TIMEOUT_S * 1000;
 	rc = setsockopt(sock, IPPROTO_TCP, TCP_USER_TIMEOUT, &opt, sizeof(opt));
 	xassert(!rc, goto out_close, "%d", errno);
@@ -120,4 +103,22 @@ out_ret:
 out_intr:
 	errno = EINTR;
 	return -1;
+}
+
+int net_write(int sock, const void *buf, size_t len)
+{
+	const void *ptr;
+	int rc;
+
+	for (ptr = buf; ptr < buf + len; ptr += rc) {
+		rc = RETRY_NC(write(sock, ptr, buf + len - ptr));
+		if (!rc) {
+			errno = EIO;
+			return -1;
+		}
+		if (rc < 0)
+			return -1;
+	}
+
+	return 0;
 }

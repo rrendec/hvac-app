@@ -6,5 +6,6 @@
 #define NET_SOCKET_TIMEOUT_S	20
 
 int net_connect_loop(const char *host, const char *port);
+int net_write(int sock, const void *buf, size_t len);
 
 #endif

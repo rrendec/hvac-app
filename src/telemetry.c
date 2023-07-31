@@ -65,8 +65,8 @@ static int format_data(char **buf, size_t *len, const struct telemetry_data *d)
 
 static int dequeue_and_send(int sock)
 {
-	int rc, ret;
-	char *buf, *ptr;
+	int rc;
+	char *buf;
 	size_t len;
 	struct tlm_q_entry *entry;
 
@@ -90,43 +90,15 @@ static int dequeue_and_send(int sock)
 	free(entry);
 	xassert(!rc, return ENOTRECOVERABLE, "%d", rc);
 
-	/*
-	 * If the peer closes the connection, poll() returns 0x1c (POLLOUT |
-	 * POLLERR | POLLHUP) [see /usr/include/bits/poll.h] in revents, then
-	 * write() fails with EPIPE. TBD if it makes sense to catch this early
-	 * and avoid the extra call to write().
-	 *
-	 * If the link is severed (e.g. server dies abruptly or network issue),
-	 * poll() still returns 0x1c in revents, then write() fails with
-	 * ETIMEDOUT.
-	 */
-	for (ptr = buf, ret = ENOTRECOVERABLE; ptr < buf + len; ptr += rc) {
-		struct pollfd fds = {.fd = sock, .events = POLLOUT};
-
-		rc = RETRY_NC(poll(&fds, 1, NET_SOCKET_TIMEOUT_S * 1000), goto out_free_buf);
-		xassert(rc != -1, goto out_free_buf, "%d", errno);
-
-		if (!rc) {
-			ret = ETIMEDOUT;
-			goto out_lost;
-		}
-
-		rc = RETRY_NC(write(sock, ptr, buf + len - ptr), goto out_free_buf);
-		if (rc <= 0) {
-			xprerrf(SD_DEBUG "Write failed: %d %d %x\n", rc, errno, fds.revents);
-			ret = rc ? (errno ? errno : EIO) : EIO;
-			goto out_lost;
-		}
-	}
-
-	ret = 0;
-
-out_lost:
-	if (ret)
-		xprintf(SD_ERR "Lost telemetry connection: %d\n", ret);
-out_free_buf:
+	rc = net_write(sock, buf, len);
 	free(buf);
-	return ret;
+	if (!rc)
+		return 0;
+	if (errno == EINTR)
+		return ENOTRECOVERABLE;
+	xprintf(SD_ERR "Lost telemetry connection: %d\n", errno);
+
+	return errno;
 abort_unlock:
 	rc = pthread_mutex_unlock(&tlm_q_mutex);
 	xassert(!rc, NOOP, "%d", rc);
