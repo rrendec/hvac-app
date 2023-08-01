@@ -15,8 +15,9 @@ set(hvac_SOURCES
 	src/json.c
 	src/network.c
 	src/telemetry.c
+	src/memcache.c
 )
-set(hvac_LIBS civetweb cjson pthread)
+set(hvac_LIBS civetweb cjson pthread m)
 
 if(WITH_EMULATOR)
 	list(APPEND hvac_SOURCES src/emulator.c)

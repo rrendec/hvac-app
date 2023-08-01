@@ -1,6 +1,7 @@
 #include <poll.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -121,4 +122,24 @@ int net_write(int sock, const void *buf, size_t len)
 	}
 
 	return 0;
+}
+
+ssize_t __net_read(int sock, void *buf, size_t len, int nl)
+{
+	void *ptr;
+	int rc;
+
+	for (ptr = buf; ptr < buf + len; ptr += rc) {
+		rc = RETRY_NC(read(sock, ptr, buf + len - ptr));
+		if (!rc) {
+			errno = EIO;
+			return -1;
+		}
+		if (rc < 0)
+			return -1;
+		if (nl && memchr(ptr, '\n', rc))
+			return ptr - buf + rc;
+	}
+
+	return len;
 }

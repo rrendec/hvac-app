@@ -27,5 +27,6 @@ struct ctrl_data cd_inst = {
 	.erv_low = STD_OFF,
 	.erv_high = STD_OFF,
 };
+struct ext_data ed_inst;
 pthread_mutex_t rd_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* end of run data */

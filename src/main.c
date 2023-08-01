@@ -19,6 +19,7 @@
 #include "gsdata.h"
 #include "json.h"
 #include "telemetry.h"
+#include "memcache.h"
 
 __thread volatile int __canceled;
 
@@ -74,6 +75,7 @@ const struct {
 pthread_mutex_t oestream_mutex = PTHREAD_MUTEX_INITIALIZER;
 cJSON *config;
 cJSON *telemetry_cfg;
+cJSON *memcache_cfg;
 
 unsigned int gpio_pin_map[NUM_GPIO_PINS] = GPIO_MAP_INITIALIZER;
 const int gpio_def_val[NUM_GPIO_PINS] = {[0 ... NUM_GPIO_PINS - 1] = 1};
@@ -860,6 +862,11 @@ int worker(void)
 		xassert(!rc, goto out_clo_tfd, "%d", rc);
 	}
 
+	if (memcache_cfg) {
+		rc = memcache_init(memcache_cfg);
+		xassert(!rc, goto out_tlm_exit, "%d", rc);
+	}
+
 	while (keep_going) {
 		uint64_t overruns = 0;
 
@@ -881,9 +888,12 @@ int worker(void)
 
 	xprintf(SD_INFO "Shutting down...\n");
 
+	if (memcache_cfg)
+		memcache_exit();
+
+out_tlm_exit:
 	if (telemetry_cfg)
 		telemetry_exit();
-
 out_clo_tfd:
 	close(tfd);
 out_stop:
@@ -922,6 +932,7 @@ int parse_config(const char *path)
 		xprerrf("%s: %s\n", path, strerror(rc));
 	} else {
 		telemetry_cfg = cJSON_GetObjectItem(config, "telemetry");
+		memcache_cfg = cJSON_GetObjectItem(config, "memcache");
 	}
 
 	return rc;

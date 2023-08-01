@@ -89,11 +89,19 @@ enum gpio_pins {
 	NUM_GPIO_PINS
 };
 
+struct ext_data {
+	int temp;
+	int humid;
+	int pres;
+	int aqi;
+	time_t dt;
+};
+
 extern struct sensor_data sd_inst;
 extern pthread_mutex_t sd_mutex;
 
 extern struct run_data rd_inst;
 extern struct ctrl_data cd_inst;
+extern struct ext_data ed_inst;
 extern pthread_mutex_t rd_mutex;
-
 #endif
