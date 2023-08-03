@@ -26,7 +26,7 @@ extern pthread_mutex_t oestream_mutex;
 #define first_arg(arg, ...) arg
 #define shift_arg(arg, ...) __VA_OPT__(,) __VA_ARGS__
 
-#define xassert(condition, fallback, ...) do {					\
+#define xassert(condition, fallback, ...) ({					\
 	if (!(condition)) {							\
 		xprerrf(SD_ERR "Assertion '%s' failed in %s() [%s:%d]"		\
 			__VA_OPT__(": " first_arg(__VA_ARGS__)) "\n",		\
@@ -34,17 +34,17 @@ extern pthread_mutex_t oestream_mutex;
 			__VA_OPT__(shift_arg(__VA_ARGS__)));			\
 		fallback;							\
 	}									\
-} while (0)
+})
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
 extern __thread volatile int __canceled;
 
-#define CHECK_CANCELED(fallback) do {						\
+#define CHECK_CANCELED(fallback) ({						\
 	if (__canceled) {							\
 		fallback;							\
 	}									\
-} while (0)
+})
 
 #define __RETRY_NC(expression, fallback, ...) ({				\
 	long int __rc;								\
