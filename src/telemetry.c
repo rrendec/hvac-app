@@ -115,6 +115,7 @@ static void *tlm_main(void *arg)
 	char pstr[6];
 	int rc = 0, sock;
 
+	pthread_setname_np(pthread_self(), "telemetry");
 	snprintf(pstr, sizeof(pstr), "%d", port);
 
 	while (rc != ENOTRECOVERABLE) {
