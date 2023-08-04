@@ -16,94 +16,11 @@
 #include <civetweb.h>
 
 #include "common.h"
+#include "gsdata.h"
 #include "json.h"
 #include "telemetry.h"
 
 __thread volatile int __canceled;
-
-enum furnace_mode {
-	FURNACE_OFF,
-	FURNACE_FAN,
-	FURNACE_HEAT,
-	FURNACE_COOL,
-	FURNACE_MAX = FURNACE_COOL
-};
-
-enum erv_mode {
-	ERV_OFF,
-	ERV_RECIRC,	// Recirculate
-	ERV_I20MH,	// Intermittent - 20 min/hour
-	ERV_I30MH,	// Intermittent - 30 min/hour
-	ERV_I40MH,	// Intermittent - 40 min/hour
-	ERV_LOW,	// Always on, low speed
-	ERV_HIGH,	// Always on, high speed
-	ERV_MAX = ERV_HIGH
-};
-
-enum std_on_off {
-	STD_OFF,
-	STD_ON,
-};
-
-/* Running mode configuration/settings */
-// TODO: better name
-struct run_data {
-	enum furnace_mode furnace_mode;
-	enum std_on_off humid_mode;
-	enum erv_mode erv_mode;
-	int temp_sp_heat;
-	int temp_sp_cool;
-	int temp_thres;
-	int humid_sp;
-	// sync to disk delay counter
-	int sync;
-};
-
-/* Discrete output control data */
-// TODO: better name
-struct ctrl_data {
-	enum std_on_off furnace_blow;
-	enum std_on_off furnace_heat;
-	enum std_on_off furnace_cool;
-	enum std_on_off humid_d_close;
-	enum std_on_off humid_d_open;
-	enum std_on_off humid_fan;
-	enum std_on_off humid_valve;
-	enum std_on_off erv_off;
-	enum std_on_off erv_recirc;
-	enum std_on_off erv_low;
-	enum std_on_off erv_high;
-};
-
-/* Sensor data - raw and computed */
-struct sensor_data {
-	// AQ-N-LCD
-	int temp1;
-	int humid1;
-	int aq;
-	// XDUCER-D-TH
-	int temp2;
-	int humid2;
-	// calculated
-	int temp_avg;
-	int humid_avg;
-	int valid;
-};
-
-enum gpio_pins {
-	GPIO_FURNACE_BLOW,
-	GPIO_FURNACE_HEAT,
-	GPIO_FURNACE_COOL,
-	GPIO_HUMID_D_CLOSE,
-	GPIO_HUMID_D_OPEN,
-	GPIO_HUMID_FAN,
-	GPIO_HUMID_VALVE,
-	GPIO_ERV_OFF,
-	GPIO_ERV_RECIRC,
-	GPIO_ERV_LOW,
-	GPIO_ERV_HIGH,
-	NUM_GPIO_PINS
-};
 
 enum http_methods {
 	HTTP_GET,
@@ -169,36 +86,6 @@ struct gpiod_chip *chip;
 struct gpiod_line_bulk bulk;
 modbus_t *mb;
 /* end of hw handles */
-
-/* sensor data below */
-struct sensor_data sd_snap;
-pthread_mutex_t sd_mutex = PTHREAD_MUTEX_INITIALIZER;
-/* end of sensor data */
-
-/* run data below */
-struct run_data rd_inst = {
-	.furnace_mode = FURNACE_OFF,
-	.erv_mode = ERV_OFF,
-	.temp_sp_heat = 220,	// 22.0 C
-	.temp_sp_cool = 250,	// 25.0 C
-	.temp_thres = 5,	// 0.5 C
-	.humid_sp = 350,	// 35.0 %
-};
-struct ctrl_data cd_inst = {
-	.furnace_blow = STD_OFF,
-	.furnace_heat = STD_OFF,
-	.furnace_cool = STD_OFF,
-	.humid_d_close = STD_OFF,
-	.humid_d_open = STD_OFF,
-	.humid_fan = STD_OFF,
-	.humid_valve = STD_OFF,
-	.erv_off = STD_ON,
-	.erv_recirc = STD_OFF,
-	.erv_low = STD_OFF,
-	.erv_high = STD_OFF,
-};
-pthread_mutex_t rd_mutex = PTHREAD_MUTEX_INITIALIZER;
-/* end of run data */
 
 static inline const char *cfg_get_string(const char *key, const char *_default)
 {
@@ -510,7 +397,7 @@ int loop_1_sec(void)
 
 	if (sens_cnt) {
 		sens_cnt = (sens_cnt + 1) % 5;
-		sd = sd_snap;
+		sd = sd_inst;
 	} else if (sensor_read(mb, &sd)) {
 		if (sens_fail++ >= 30) {
 			xprintf(SD_ERR "Sensor failure\n");
@@ -520,7 +407,7 @@ int loop_1_sec(void)
 		sens_fail = 0;
 		sensors_print(&sd);
 		pthread_mutex_lock(&sd_mutex);
-		sd_snap = sd;
+		sd_inst = sd;
 		pthread_mutex_unlock(&sd_mutex);
 		sens_cnt++;
 	}
@@ -745,7 +632,7 @@ int cv_hdlr_sensor_data_get(struct mg_connection *conn, void *cbdata)
 	cJSON *rsp = cJSON_CreateObject();
 
 	pthread_mutex_lock(&sd_mutex);
-	sd = sd_snap;
+	sd = sd_inst;
 	pthread_mutex_unlock(&sd_mutex);
 
 	cJSON_AddItemToObject(rsp, "temp_avg", cJSON_CreateNumber(sd.temp_avg / 10.0));
