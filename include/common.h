@@ -58,4 +58,11 @@ extern __thread volatile int __canceled;
 #define RETRY_NC(expression, fallback...)					\
 	__RETRY_NC(expression, ##fallback, break)
 
+#define STR_ARRAY(list...) ((const char * const[]){list, NULL})
+
+#define STATIC_STRLEN(str) (sizeof(str) - 1)
+
+#define STATIC_STRNCMP(ptr, str) 						\
+	strncmp((ptr), str, sizeof(str) - 1)
+
 #endif
