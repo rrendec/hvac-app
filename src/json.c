@@ -40,6 +40,16 @@ double json_get_number(cJSON *json, const char *key,
 		_default : value;
 }
 
+cJSON *json_get_object_path(cJSON *json, const char * const *keys)
+{
+	while (*keys && json) {
+		json = cJSON_GetObjectItem(json, *keys);
+		keys++;
+	}
+
+	return json;
+}
+
 int json_read(const char *path, cJSON **json, int *errl, int *errc)
 {
 	int fd, ret = 0;

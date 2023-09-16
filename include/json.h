@@ -16,6 +16,7 @@ const char *json_get_string(cJSON *json, const char *key, const char *_default);
 double json_get_number(cJSON *json, const char *key,
 		       double min, double max, double _default);
 
+cJSON *json_get_object_path(cJSON *json, const char * const *keys);
 int json_read(const char *path, cJSON **json, int *errl, int *errc);
 int json_write(const char *path, cJSON *json);
 
