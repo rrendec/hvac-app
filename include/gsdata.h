@@ -98,10 +98,8 @@ struct ext_data {
 };
 
 extern struct sensor_data gs_sd;
-extern pthread_mutex_t sd_mutex;
-
 extern struct run_data gs_rd;
 extern struct ctrl_data gs_cd;
 extern struct ext_data gs_ed;
-extern pthread_mutex_t rd_mutex;
+extern pthread_mutex_t gs_mutex;
 #endif

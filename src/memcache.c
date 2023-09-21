@@ -151,12 +151,12 @@ static int mc_handle_timer(int sock)
 	xassert(cJSON_IsNumber(node), goto out_free);
 	ed.dt = cJSON_GetNumberValue(node);
 
-	rc = pthread_mutex_lock(&rd_mutex);
+	rc = pthread_mutex_lock(&gs_mutex);
 	xassert(!rc, goto out_free, "%d", rc);
 
 	gs_ed = ed;
 
-	rc = pthread_mutex_unlock(&rd_mutex);
+	rc = pthread_mutex_unlock(&gs_mutex);
 	xassert(!rc, goto out_free, "%d", rc);
 
 	rc = 0;

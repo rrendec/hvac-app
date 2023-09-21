@@ -1,11 +1,9 @@
 #include "gsdata.h"
 
-/* sensor data below */
+/* Global sensor data */
 struct sensor_data gs_sd;
-pthread_mutex_t sd_mutex = PTHREAD_MUTEX_INITIALIZER;
-/* end of sensor data */
 
-/* run data below */
+/* Global run data */
 struct run_data gs_rd = {
 	.furnace_mode = FURNACE_OFF,
 	.erv_mode = ERV_OFF,
@@ -14,6 +12,8 @@ struct run_data gs_rd = {
 	.temp_thres = 5,	// 0.5 C
 	.humid_sp = 350,	// 35.0 %
 };
+
+/* Global control data */
 struct ctrl_data gs_cd = {
 	.furnace_blow = STD_OFF,
 	.furnace_heat = STD_OFF,
@@ -27,6 +27,9 @@ struct ctrl_data gs_cd = {
 	.erv_low = STD_OFF,
 	.erv_high = STD_OFF,
 };
+
+/* Global external data */
 struct ext_data gs_ed;
-pthread_mutex_t rd_mutex = PTHREAD_MUTEX_INITIALIZER;
-/* end of run data */
+
+/* Global data mutex */
+pthread_mutex_t gs_mutex = PTHREAD_MUTEX_INITIALIZER;

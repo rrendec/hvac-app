@@ -142,7 +142,7 @@ int nvram_read(void)
  * This function assumes exclusive access to gs_rd. It is called either:
  *   - during initialization, before other threads (such as civetweb) are
  *     started, and in this case no synchronization is needed; or
- *   - in the delay loop, and in this case rd_mutex is locked externally.
+ *   - in the delay loop, and in this case gs_mutex is locked externally.
  */
 int nvram_write(void)
 {
@@ -408,13 +408,13 @@ int loop_1_sec(void)
 	} else {
 		sens_fail = 0;
 		sensors_print(&sd);
-		pthread_mutex_lock(&sd_mutex);
+		pthread_mutex_lock(&gs_mutex);
 		gs_sd = sd;
-		pthread_mutex_unlock(&sd_mutex);
+		pthread_mutex_unlock(&gs_mutex);
 		sens_cnt++;
 	}
 
-	pthread_mutex_lock(&rd_mutex);
+	pthread_mutex_lock(&gs_mutex);
 
 	if (gs_rd.furnace_mode != old_furnace_mode) {
 		xprintf(SD_NOTICE "Furnace mode: %s\n",
@@ -579,7 +579,7 @@ int loop_1_sec(void)
 		gs_rd.sync--;
 
 	rd = gs_rd;
-	pthread_mutex_unlock(&rd_mutex);
+	pthread_mutex_unlock(&gs_mutex);
 
 	/*
 	 * Sync the GPIO pin state outside the critical region. There is no
@@ -633,9 +633,9 @@ int cv_hdlr_sensor_data_get(struct mg_connection *conn, void *cbdata)
 	struct sensor_data sd;
 	cJSON *rsp = cJSON_CreateObject();
 
-	pthread_mutex_lock(&sd_mutex);
+	pthread_mutex_lock(&gs_mutex);
 	sd = gs_sd;
-	pthread_mutex_unlock(&sd_mutex);
+	pthread_mutex_unlock(&gs_mutex);
 
 	cJSON_AddItemToObject(rsp, "temp_avg", cJSON_CreateNumber(sd.temp_avg / 10.0));
 	cJSON_AddItemToObject(rsp, "humid_avg", cJSON_CreateNumber(sd.humid_avg / 10.0));
@@ -654,9 +654,9 @@ int cv_hdlr_ctrl_data_get(struct mg_connection *conn, void *cbdata)
 	struct ctrl_data cd;
 	cJSON *rsp = cJSON_CreateObject();
 
-	pthread_mutex_lock(&rd_mutex);
+	pthread_mutex_lock(&gs_mutex);
 	cd = gs_cd;
-	pthread_mutex_unlock(&rd_mutex);
+	pthread_mutex_unlock(&gs_mutex);
 
 	cJSON_AddItemToObject(rsp, "furnace_blow",
 			      cJSON_CreateString(std_on_off_map[cd.furnace_blow]));
@@ -695,9 +695,9 @@ int cv_hdlr_run_data_get(struct mg_connection *conn, void *cbdata)
 	struct run_data rd;
 	cJSON *rsp = cJSON_CreateObject();
 
-	pthread_mutex_lock(&rd_mutex);
+	pthread_mutex_lock(&gs_mutex);
 	rd = gs_rd;
-	pthread_mutex_unlock(&rd_mutex);
+	pthread_mutex_unlock(&gs_mutex);
 
 	cJSON_AddItemToObject(rsp, "furnace_mode",
 			      cJSON_CreateString(rd_furnace_map[rd.furnace_mode]));
@@ -741,7 +741,7 @@ int cv_hdlr_run_data_post(struct mg_connection *conn, void *cbdata)
 		return 400;
 	}
 
-	pthread_mutex_lock(&rd_mutex);
+	pthread_mutex_lock(&gs_mutex);
 	if ((idx = json_map_string(req, "furnace_mode", NULL, rd_furnace_map)) >= 0) {
 		chg |= gs_rd.furnace_mode != idx;
 		gs_rd.furnace_mode = idx;
@@ -774,7 +774,7 @@ int cv_hdlr_run_data_post(struct mg_connection *conn, void *cbdata)
 	}
 	if (chg)
 		gs_rd.sync = 2;
-	pthread_mutex_unlock(&rd_mutex);
+	pthread_mutex_unlock(&gs_mutex);
 
 	cJSON_Delete(req);
 
