@@ -107,11 +107,12 @@ static inline const char *nvram_path(void)
 
 /*
  * This function is called once during initialization, before other threads
- * (such as civetweb) are started. No synchronization is required to access
- * gs_rd. Furthermore, we can use the default values from the gs_rd
- * initializer to avoid duplicating the default values.
+ * (such as civetweb) are started. In this case, rd is &gs_rd, and no
+ * synchronization is required because there are no other writers (yet).
+ * Furthermore, we can use the default values from the gs_rd initializer to
+ * avoid duplicating the default values.
  */
-int nvram_read(void)
+int nvram_read(struct run_data *rd)
 {
 	cJSON *json = NULL;
 	int rc;
@@ -120,18 +121,18 @@ int nvram_read(void)
 	if (rc)
 		return rc;
 
-	gs_rd.furnace_mode = json_get_number(json, "furnace_mode",
-		0, FURNACE_MAX, gs_rd.furnace_mode);
-	gs_rd.humid_mode = json_get_number(json, "humid_mode",
-		0, STD_ON, gs_rd.humid_mode);
-	gs_rd.erv_mode = json_get_number(json, "erv_mode",
-		0, ERV_MAX, gs_rd.erv_mode);
-	gs_rd.temp_sp_heat = json_get_number(json, "temp_sp_heat",
-		TEMP_SP_HEAT_MIN, TEMP_SP_HEAT_MAX, gs_rd.temp_sp_heat);
-	gs_rd.temp_sp_cool = json_get_number(json, "temp_sp_cool",
-		TEMP_SP_COOL_MIN, TEMP_SP_COOL_MAX, gs_rd.temp_sp_cool);
-	gs_rd.humid_sp = json_get_number(json, "humid_sp",
-		HUMID_SP_MIN, HUMID_SP_MAX, gs_rd.humid_sp);
+	rd->furnace_mode = json_get_number(json, "furnace_mode",
+		0, FURNACE_MAX, rd->furnace_mode);
+	rd->humid_mode = json_get_number(json, "humid_mode",
+		0, STD_ON, rd->humid_mode);
+	rd->erv_mode = json_get_number(json, "erv_mode",
+		0, ERV_MAX, rd->erv_mode);
+	rd->temp_sp_heat = json_get_number(json, "temp_sp_heat",
+		TEMP_SP_HEAT_MIN, TEMP_SP_HEAT_MAX, rd->temp_sp_heat);
+	rd->temp_sp_cool = json_get_number(json, "temp_sp_cool",
+		TEMP_SP_COOL_MIN, TEMP_SP_COOL_MAX, rd->temp_sp_cool);
+	rd->humid_sp = json_get_number(json, "humid_sp",
+		HUMID_SP_MIN, HUMID_SP_MAX, rd->humid_sp);
 
 	cJSON_Delete(json);
 
@@ -139,12 +140,13 @@ int nvram_read(void)
 }
 
 /*
- * This function assumes exclusive access to gs_rd. It is called either:
+ * This function assumes *rd does not change. It is called either:
  *   - during initialization, before other threads (such as civetweb) are
- *     started, and in this case no synchronization is needed; or
- *   - in the delay loop, and in this case gs_mutex is locked externally.
+ *     started, and in this case rd is &gs_rd and no synchronization is
+ *     needed because there are no other writers; or
+ *   - in the delay loop, and in this case a copy of gs_rd is passed.
  */
-int nvram_write(void)
+int nvram_write(const struct run_data *rd)
 {
 	cJSON *json = cJSON_CreateObject();
 	const char *cfg_path;
@@ -153,12 +155,12 @@ int nvram_write(void)
 
 	xprintf(SD_DEBUG "Sync run mode data to non-volatile storage\n");
 
-	cJSON_AddItemToObject(json, "furnace_mode", cJSON_CreateNumber(gs_rd.furnace_mode));
-	cJSON_AddItemToObject(json, "humid_mode", cJSON_CreateNumber(gs_rd.humid_mode));
-	cJSON_AddItemToObject(json, "erv_mode", cJSON_CreateNumber(gs_rd.erv_mode));
-	cJSON_AddItemToObject(json, "temp_sp_heat", cJSON_CreateNumber(gs_rd.temp_sp_heat));
-	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(gs_rd.temp_sp_cool));
-	cJSON_AddItemToObject(json, "humid_sp", cJSON_CreateNumber(gs_rd.humid_sp));
+	cJSON_AddItemToObject(json, "furnace_mode", cJSON_CreateNumber(rd->furnace_mode));
+	cJSON_AddItemToObject(json, "humid_mode", cJSON_CreateNumber(rd->humid_mode));
+	cJSON_AddItemToObject(json, "erv_mode", cJSON_CreateNumber(rd->erv_mode));
+	cJSON_AddItemToObject(json, "temp_sp_heat", cJSON_CreateNumber(rd->temp_sp_heat));
+	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(rd->temp_sp_cool));
+	cJSON_AddItemToObject(json, "humid_sp", cJSON_CreateNumber(rd->humid_sp));
 
 	cfg_path = nvram_path();
 	if (asprintf(&tmp_path, "%s~", cfg_path) >= 0) {
@@ -572,14 +574,15 @@ int loop_1_sec(void)
 		gs_cd.humid_d_open = STD_OFF;
 	}
 
-	if (gs_rd.sync == 1) {
-		nvram_write();
-		gs_rd.sync = 0;
-	} else if (gs_rd.sync)
+	rd = gs_rd;
+
+	if (gs_rd.sync)
 		gs_rd.sync--;
 
-	rd = gs_rd;
 	pthread_mutex_unlock(&gs_mutex);
+
+	if (rd.sync == 1)
+		nvram_write(&rd);
 
 	/*
 	 * Sync the GPIO pin state outside the critical region. There is no
@@ -833,9 +836,9 @@ int worker(void)
 	int rc, tfd;
 	struct mg_context *cv_ctx;
 
-	rc = nvram_read();
+	rc = nvram_read(&gs_rd);
 	if (rc == ENOENT)
-		rc = nvram_write();
+		rc = nvram_write(&gs_rd);
 	xassert(!rc, return rc, "%d", rc);
 
 	rc = gpio_init();
@@ -906,7 +909,7 @@ out_stop:
 	 * threads (civetweb) are stopped, so no locking is needed.
 	 */
 	if (gs_rd.sync)
-		nvram_write();
+		nvram_write(&gs_rd);
 
 	/*
 	 * Turn the furnace off. GPIO pins keep their state, and we must make
