@@ -154,7 +154,7 @@ static int mc_handle_timer(int sock)
 	rc = pthread_mutex_lock(&rd_mutex);
 	xassert(!rc, goto out_free, "%d", rc);
 
-	ed_inst = ed;
+	gs_ed = ed;
 
 	rc = pthread_mutex_unlock(&rd_mutex);
 	xassert(!rc, goto out_free, "%d", rc);

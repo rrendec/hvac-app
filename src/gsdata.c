@@ -1,12 +1,12 @@
 #include "gsdata.h"
 
 /* sensor data below */
-struct sensor_data sd_inst;
+struct sensor_data gs_sd;
 pthread_mutex_t sd_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* end of sensor data */
 
 /* run data below */
-struct run_data rd_inst = {
+struct run_data gs_rd = {
 	.furnace_mode = FURNACE_OFF,
 	.erv_mode = ERV_OFF,
 	.temp_sp_heat = 220,	// 22.0 C
@@ -14,7 +14,7 @@ struct run_data rd_inst = {
 	.temp_thres = 5,	// 0.5 C
 	.humid_sp = 350,	// 35.0 %
 };
-struct ctrl_data cd_inst = {
+struct ctrl_data gs_cd = {
 	.furnace_blow = STD_OFF,
 	.furnace_heat = STD_OFF,
 	.furnace_cool = STD_OFF,
@@ -27,6 +27,6 @@ struct ctrl_data cd_inst = {
 	.erv_low = STD_OFF,
 	.erv_high = STD_OFF,
 };
-struct ext_data ed_inst;
+struct ext_data gs_ed;
 pthread_mutex_t rd_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* end of run data */

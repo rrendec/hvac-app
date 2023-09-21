@@ -108,7 +108,7 @@ static inline const char *nvram_path(void)
 /*
  * This function is called once during initialization, before other threads
  * (such as civetweb) are started. No synchronization is required to access
- * rd_inst. Furthermore, we can use the default values from the rd_inst
+ * gs_rd. Furthermore, we can use the default values from the gs_rd
  * initializer to avoid duplicating the default values.
  */
 int nvram_read(void)
@@ -120,18 +120,18 @@ int nvram_read(void)
 	if (rc)
 		return rc;
 
-	rd_inst.furnace_mode = json_get_number(json, "furnace_mode",
-		0, FURNACE_MAX, rd_inst.furnace_mode);
-	rd_inst.humid_mode = json_get_number(json, "humid_mode",
-		0, STD_ON, rd_inst.humid_mode);
-	rd_inst.erv_mode = json_get_number(json, "erv_mode",
-		0, ERV_MAX, rd_inst.erv_mode);
-	rd_inst.temp_sp_heat = json_get_number(json, "temp_sp_heat",
-		TEMP_SP_HEAT_MIN, TEMP_SP_HEAT_MAX, rd_inst.temp_sp_heat);
-	rd_inst.temp_sp_cool = json_get_number(json, "temp_sp_cool",
-		TEMP_SP_COOL_MIN, TEMP_SP_COOL_MAX, rd_inst.temp_sp_cool);
-	rd_inst.humid_sp = json_get_number(json, "humid_sp",
-		HUMID_SP_MIN, HUMID_SP_MAX, rd_inst.humid_sp);
+	gs_rd.furnace_mode = json_get_number(json, "furnace_mode",
+		0, FURNACE_MAX, gs_rd.furnace_mode);
+	gs_rd.humid_mode = json_get_number(json, "humid_mode",
+		0, STD_ON, gs_rd.humid_mode);
+	gs_rd.erv_mode = json_get_number(json, "erv_mode",
+		0, ERV_MAX, gs_rd.erv_mode);
+	gs_rd.temp_sp_heat = json_get_number(json, "temp_sp_heat",
+		TEMP_SP_HEAT_MIN, TEMP_SP_HEAT_MAX, gs_rd.temp_sp_heat);
+	gs_rd.temp_sp_cool = json_get_number(json, "temp_sp_cool",
+		TEMP_SP_COOL_MIN, TEMP_SP_COOL_MAX, gs_rd.temp_sp_cool);
+	gs_rd.humid_sp = json_get_number(json, "humid_sp",
+		HUMID_SP_MIN, HUMID_SP_MAX, gs_rd.humid_sp);
 
 	cJSON_Delete(json);
 
@@ -139,7 +139,7 @@ int nvram_read(void)
 }
 
 /*
- * This function assumes exclusive access to rd_inst. It is called either:
+ * This function assumes exclusive access to gs_rd. It is called either:
  *   - during initialization, before other threads (such as civetweb) are
  *     started, and in this case no synchronization is needed; or
  *   - in the delay loop, and in this case rd_mutex is locked externally.
@@ -153,12 +153,12 @@ int nvram_write(void)
 
 	xprintf(SD_DEBUG "Sync run mode data to non-volatile storage\n");
 
-	cJSON_AddItemToObject(json, "furnace_mode", cJSON_CreateNumber(rd_inst.furnace_mode));
-	cJSON_AddItemToObject(json, "humid_mode", cJSON_CreateNumber(rd_inst.humid_mode));
-	cJSON_AddItemToObject(json, "erv_mode", cJSON_CreateNumber(rd_inst.erv_mode));
-	cJSON_AddItemToObject(json, "temp_sp_heat", cJSON_CreateNumber(rd_inst.temp_sp_heat));
-	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(rd_inst.temp_sp_cool));
-	cJSON_AddItemToObject(json, "humid_sp", cJSON_CreateNumber(rd_inst.humid_sp));
+	cJSON_AddItemToObject(json, "furnace_mode", cJSON_CreateNumber(gs_rd.furnace_mode));
+	cJSON_AddItemToObject(json, "humid_mode", cJSON_CreateNumber(gs_rd.humid_mode));
+	cJSON_AddItemToObject(json, "erv_mode", cJSON_CreateNumber(gs_rd.erv_mode));
+	cJSON_AddItemToObject(json, "temp_sp_heat", cJSON_CreateNumber(gs_rd.temp_sp_heat));
+	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(gs_rd.temp_sp_cool));
+	cJSON_AddItemToObject(json, "humid_sp", cJSON_CreateNumber(gs_rd.humid_sp));
 
 	cfg_path = nvram_path();
 	if (asprintf(&tmp_path, "%s~", cfg_path) >= 0) {
@@ -305,24 +305,24 @@ int sensors_once(void)
 }
 
 /*
- * There is no locking around cd_inst because cd_inst is modified only in
+ * There is no locking around gs_cd because gs_cd is modified only in
  * loop_1_sec(), which always runs in the same thread, and we are called only
  * from that function.
  */
 void gpio_state_sync(void)
 {
 	const int values[NUM_GPIO_PINS] = {
-		[GPIO_FURNACE_BLOW]	= !cd_inst.furnace_blow,
-		[GPIO_FURNACE_HEAT]	= !cd_inst.furnace_heat,
-		[GPIO_FURNACE_COOL]	= !cd_inst.furnace_cool,
-		[GPIO_HUMID_D_CLOSE]	= !cd_inst.humid_d_close,
-		[GPIO_HUMID_D_OPEN]	= !cd_inst.humid_d_open,
-		[GPIO_HUMID_FAN]	= !cd_inst.humid_fan,
-		[GPIO_HUMID_VALVE]	= !cd_inst.humid_valve,
-		[GPIO_ERV_OFF]		= !cd_inst.erv_off,
-		[GPIO_ERV_RECIRC]	= !cd_inst.erv_recirc,
-		[GPIO_ERV_LOW]		= !cd_inst.erv_low,
-		[GPIO_ERV_HIGH]		= !cd_inst.erv_high,
+		[GPIO_FURNACE_BLOW]	= !gs_cd.furnace_blow,
+		[GPIO_FURNACE_HEAT]	= !gs_cd.furnace_heat,
+		[GPIO_FURNACE_COOL]	= !gs_cd.furnace_cool,
+		[GPIO_HUMID_D_CLOSE]	= !gs_cd.humid_d_close,
+		[GPIO_HUMID_D_OPEN]	= !gs_cd.humid_d_open,
+		[GPIO_HUMID_FAN]	= !gs_cd.humid_fan,
+		[GPIO_HUMID_VALVE]	= !gs_cd.humid_valve,
+		[GPIO_ERV_OFF]		= !gs_cd.erv_off,
+		[GPIO_ERV_RECIRC]	= !gs_cd.erv_recirc,
+		[GPIO_ERV_LOW]		= !gs_cd.erv_low,
+		[GPIO_ERV_HIGH]		= !gs_cd.erv_high,
 	};
 
 	int rc = gpiod_line_set_value_bulk(&bulk, values);
@@ -392,14 +392,14 @@ int loop_1_sec(void)
 	static int erv_timer;
 
 	struct sensor_data sd = {.valid = 0};
-	struct run_data rd_snap;
+	struct run_data rd;
 	struct timeval tv;
 
 	gettimeofday(&tv, NULL);
 
 	if (sens_cnt) {
 		sens_cnt = (sens_cnt + 1) % 5;
-		sd = sd_inst;
+		sd = gs_sd;
 	} else if (sensor_read(mb, &sd)) {
 		if (sens_fail++ >= 30) {
 			xprintf(SD_ERR "Sensor failure\n");
@@ -409,101 +409,101 @@ int loop_1_sec(void)
 		sens_fail = 0;
 		sensors_print(&sd);
 		pthread_mutex_lock(&sd_mutex);
-		sd_inst = sd;
+		gs_sd = sd;
 		pthread_mutex_unlock(&sd_mutex);
 		sens_cnt++;
 	}
 
 	pthread_mutex_lock(&rd_mutex);
 
-	if (rd_inst.furnace_mode != old_furnace_mode) {
+	if (gs_rd.furnace_mode != old_furnace_mode) {
 		xprintf(SD_NOTICE "Furnace mode: %s\n",
-			rd_furnace_map[rd_inst.furnace_mode]);
+			rd_furnace_map[gs_rd.furnace_mode]);
 		furnace_holdoff = 5;
 		heat_cool_state = STD_OFF;
-		old_furnace_mode = rd_inst.furnace_mode;
+		old_furnace_mode = gs_rd.furnace_mode;
 	}
 
-	switch (rd_inst.furnace_mode) {
+	switch (gs_rd.furnace_mode) {
 	case FURNACE_OFF:
-		cd_inst.furnace_blow = STD_OFF;
-		cd_inst.furnace_heat = STD_OFF;
-		cd_inst.furnace_cool = STD_OFF;
+		gs_cd.furnace_blow = STD_OFF;
+		gs_cd.furnace_heat = STD_OFF;
+		gs_cd.furnace_cool = STD_OFF;
 		break;
 	case FURNACE_FAN:
-		cd_inst.furnace_blow = STD_ON;
-		cd_inst.furnace_heat = STD_OFF;
-		cd_inst.furnace_cool = STD_OFF;
+		gs_cd.furnace_blow = STD_ON;
+		gs_cd.furnace_heat = STD_OFF;
+		gs_cd.furnace_cool = STD_OFF;
 		break;
 	case FURNACE_HEAT:
-		cd_inst.furnace_blow = STD_ON;
-		cd_inst.furnace_cool = STD_OFF;
+		gs_cd.furnace_blow = STD_ON;
+		gs_cd.furnace_cool = STD_OFF;
 		if (furnace_holdoff) {
 			furnace_holdoff--;
 			break;
 		}
 		if (!sd.valid)
 			break;
-		if (sd.temp_avg >= rd_inst.temp_sp_heat + rd_inst.temp_thres &&
+		if (sd.temp_avg >= gs_rd.temp_sp_heat + gs_rd.temp_thres &&
 		    heat_cool_state == STD_ON) {
 			xprintf(SD_NOTICE "HEAT OFF\n");
-			cd_inst.furnace_heat = STD_OFF;
+			gs_cd.furnace_heat = STD_OFF;
 			heat_cool_state = STD_OFF;
 			break;
 		}
-		if (sd.temp_avg <= rd_inst.temp_sp_heat - rd_inst.temp_thres &&
+		if (sd.temp_avg <= gs_rd.temp_sp_heat - gs_rd.temp_thres &&
 		    heat_cool_state == STD_OFF) {
 			xprintf(SD_NOTICE "HEAT ON\n");
-			cd_inst.furnace_heat = STD_ON;
+			gs_cd.furnace_heat = STD_ON;
 			heat_cool_state = STD_ON;
 		}
 		break;
 	case FURNACE_COOL:
-		cd_inst.furnace_blow = STD_ON;
-		cd_inst.furnace_heat = STD_OFF;
+		gs_cd.furnace_blow = STD_ON;
+		gs_cd.furnace_heat = STD_OFF;
 		if (furnace_holdoff) {
 			furnace_holdoff--;
 			break;
 		}
 		if (!sd.valid)
 			break;
-		if (sd.temp_avg >= rd_inst.temp_sp_cool + rd_inst.temp_thres &&
+		if (sd.temp_avg >= gs_rd.temp_sp_cool + gs_rd.temp_thres &&
 		    heat_cool_state == STD_OFF) {
 			xprintf(SD_NOTICE "COOL ON\n");
-			cd_inst.furnace_cool = STD_ON;
+			gs_cd.furnace_cool = STD_ON;
 			heat_cool_state = STD_ON;
 			break;
 		}
-		if (sd.temp_avg <= rd_inst.temp_sp_cool - rd_inst.temp_thres &&
+		if (sd.temp_avg <= gs_rd.temp_sp_cool - gs_rd.temp_thres &&
 		    heat_cool_state == STD_ON) {
 			xprintf(SD_NOTICE "COOL OFF\n");
-			cd_inst.furnace_cool = STD_OFF;
+			gs_cd.furnace_cool = STD_OFF;
 			heat_cool_state = STD_OFF;
 		}
 		break;
 	}
 
-	if (rd_inst.erv_mode != old_erv_mode) {
+	if (gs_rd.erv_mode != old_erv_mode) {
 		xprintf(SD_NOTICE "ERV mode: %s\n",
-			rd_erv_map[rd_inst.erv_mode]);
+			rd_erv_map[gs_rd.erv_mode]);
 		erv_state = STD_ON;
 		erv_timer = 0;
-		old_erv_mode = rd_inst.erv_mode;
+		old_erv_mode = gs_rd.erv_mode;
 	}
 
 
-	switch (rd_inst.erv_mode) {
+	switch (gs_rd.erv_mode) {
 	case ERV_OFF:
-		cd_inst.erv_off = STD_ON;
-		cd_inst.erv_recirc = STD_OFF;
-		cd_inst.erv_low = STD_OFF;
-		cd_inst.erv_high = STD_OFF;
+		gs_cd.erv_off = STD_ON;
+		gs_cd.erv_recirc = STD_OFF;
+		gs_cd.erv_low = STD_OFF;
+		gs_cd.erv_high = STD_OFF;
 		break;
 	case ERV_RECIRC:
-		cd_inst.erv_off = STD_OFF;
-		cd_inst.erv_recirc = STD_ON;
-		cd_inst.erv_low = STD_OFF;
-		cd_inst.erv_high = STD_OFF;
+		gs_cd.erv_off = STD_OFF;
+		gs_cd.erv_recirc = STD_ON;
+		gs_cd.erv_low = STD_OFF;
+		gs_cd.erv_high = STD_OFF;
 		break;
 	case ERV_I20MH:
 	case ERV_I30MH:
@@ -513,72 +513,72 @@ int loop_1_sec(void)
 		else {
 			erv_state = !erv_state;
 			erv_timer = erv_state ?
-				    erv_int_map[rd_inst.erv_mode].run_time_s:
-				    erv_int_map[rd_inst.erv_mode].off_time_s;
+				    erv_int_map[gs_rd.erv_mode].run_time_s:
+				    erv_int_map[gs_rd.erv_mode].off_time_s;
 		}
-		cd_inst.erv_off = STD_OFF;
-		cd_inst.erv_recirc = STD_OFF;
-		cd_inst.erv_low = erv_state;
-		cd_inst.erv_high = STD_OFF;
+		gs_cd.erv_off = STD_OFF;
+		gs_cd.erv_recirc = STD_OFF;
+		gs_cd.erv_low = erv_state;
+		gs_cd.erv_high = STD_OFF;
 		break;
 	case ERV_LOW:
-		cd_inst.erv_off = STD_OFF;
-		cd_inst.erv_recirc = STD_OFF;
-		cd_inst.erv_low = STD_ON;
-		cd_inst.erv_high = STD_OFF;
+		gs_cd.erv_off = STD_OFF;
+		gs_cd.erv_recirc = STD_OFF;
+		gs_cd.erv_low = STD_ON;
+		gs_cd.erv_high = STD_OFF;
 		break;
 	case ERV_HIGH:
-		cd_inst.erv_off = STD_OFF;
-		cd_inst.erv_recirc = STD_OFF;
-		cd_inst.erv_low = STD_OFF;
-		cd_inst.erv_high = STD_ON;
+		gs_cd.erv_off = STD_OFF;
+		gs_cd.erv_recirc = STD_OFF;
+		gs_cd.erv_low = STD_OFF;
+		gs_cd.erv_high = STD_ON;
 		break;
 	}
 
-	if (rd_inst.humid_mode != old_humid_mode && !humid_holdoff) {
+	if (gs_rd.humid_mode != old_humid_mode && !humid_holdoff) {
 		xprintf(SD_NOTICE "Humidifier mode: %s\n",
-			std_on_off_map[rd_inst.humid_mode]);
-		cd_inst.humid_d_close = rd_inst.humid_mode == STD_OFF;
-		cd_inst.humid_d_open = rd_inst.humid_mode == STD_ON;
+			std_on_off_map[gs_rd.humid_mode]);
+		gs_cd.humid_d_close = gs_rd.humid_mode == STD_OFF;
+		gs_cd.humid_d_open = gs_rd.humid_mode == STD_ON;
 		humid_holdoff = 10;
-		old_humid_mode = rd_inst.humid_mode;
+		old_humid_mode = gs_rd.humid_mode;
 	}
 
-	if (rd_inst.humid_mode == STD_ON && rd_inst.furnace_mode != FURNACE_OFF &&
+	if (gs_rd.humid_mode == STD_ON && gs_rd.furnace_mode != FURNACE_OFF &&
 	    !humid_holdoff) {
 		if (heat_cool_state == STD_ON) {
-			cd_inst.humid_fan = STD_OFF;
-			humid_duty = rd_inst.furnace_mode == FURNACE_HEAT ? 20 : 10;
+			gs_cd.humid_fan = STD_OFF;
+			humid_duty = gs_rd.furnace_mode == FURNACE_HEAT ? 20 : 10;
 		} else {
-			cd_inst.humid_fan = STD_ON;
+			gs_cd.humid_fan = STD_ON;
 			humid_duty = 10;
 		}
 
 		if (humid_cnt == 0)
-			cd_inst.humid_valve = STD_ON;
+			gs_cd.humid_valve = STD_ON;
 		else if (humid_cnt >= humid_duty)
-			cd_inst.humid_valve = STD_OFF;
+			gs_cd.humid_valve = STD_OFF;
 		humid_cnt = (humid_cnt + 1) % 30;
 	} else {
-		cd_inst.humid_fan = STD_OFF;
-		cd_inst.humid_valve = STD_OFF;
+		gs_cd.humid_fan = STD_OFF;
+		gs_cd.humid_valve = STD_OFF;
 		humid_cnt = 0;
 	}
 
 	if (humid_holdoff)
 		humid_holdoff--;
 	else {
-		cd_inst.humid_d_close = STD_OFF;
-		cd_inst.humid_d_open = STD_OFF;
+		gs_cd.humid_d_close = STD_OFF;
+		gs_cd.humid_d_open = STD_OFF;
 	}
 
-	if (rd_inst.sync == 1) {
+	if (gs_rd.sync == 1) {
 		nvram_write();
-		rd_inst.sync = 0;
-	} else if (rd_inst.sync)
-		rd_inst.sync--;
+		gs_rd.sync = 0;
+	} else if (gs_rd.sync)
+		gs_rd.sync--;
 
-	rd_snap = rd_inst;
+	rd = gs_rd;
 	pthread_mutex_unlock(&rd_mutex);
 
 	/*
@@ -592,7 +592,7 @@ int loop_1_sec(void)
 	gpio_state_sync();
 
 	if (telemetry_cfg)
-		telemetry_prep_send(tv, &rd_snap, &cd_inst, &sd);
+		telemetry_prep_send(tv, &rd, &gs_cd, &sd);
 
 	return 0;
 }
@@ -634,7 +634,7 @@ int cv_hdlr_sensor_data_get(struct mg_connection *conn, void *cbdata)
 	cJSON *rsp = cJSON_CreateObject();
 
 	pthread_mutex_lock(&sd_mutex);
-	sd = sd_inst;
+	sd = gs_sd;
 	pthread_mutex_unlock(&sd_mutex);
 
 	cJSON_AddItemToObject(rsp, "temp_avg", cJSON_CreateNumber(sd.temp_avg / 10.0));
@@ -655,7 +655,7 @@ int cv_hdlr_ctrl_data_get(struct mg_connection *conn, void *cbdata)
 	cJSON *rsp = cJSON_CreateObject();
 
 	pthread_mutex_lock(&rd_mutex);
-	cd = cd_inst;
+	cd = gs_cd;
 	pthread_mutex_unlock(&rd_mutex);
 
 	cJSON_AddItemToObject(rsp, "furnace_blow",
@@ -696,7 +696,7 @@ int cv_hdlr_run_data_get(struct mg_connection *conn, void *cbdata)
 	cJSON *rsp = cJSON_CreateObject();
 
 	pthread_mutex_lock(&rd_mutex);
-	rd = rd_inst;
+	rd = gs_rd;
 	pthread_mutex_unlock(&rd_mutex);
 
 	cJSON_AddItemToObject(rsp, "furnace_mode",
@@ -743,37 +743,37 @@ int cv_hdlr_run_data_post(struct mg_connection *conn, void *cbdata)
 
 	pthread_mutex_lock(&rd_mutex);
 	if ((idx = json_map_string(req, "furnace_mode", NULL, rd_furnace_map)) >= 0) {
-		chg |= rd_inst.furnace_mode != idx;
-		rd_inst.furnace_mode = idx;
+		chg |= gs_rd.furnace_mode != idx;
+		gs_rd.furnace_mode = idx;
 	}
 	if ((idx = json_map_string(req, "erv_mode", NULL, rd_erv_map)) >= 0) {
-		chg |= rd_inst.erv_mode != idx;
-		rd_inst.erv_mode = idx;
+		chg |= gs_rd.erv_mode != idx;
+		gs_rd.erv_mode = idx;
 	}
 	if ((idx = json_map_string(req, "humid_mode", NULL, std_on_off_map)) >= 0) {
-		chg |= rd_inst.humid_mode != idx;
-		rd_inst.humid_mode = idx;
+		chg |= gs_rd.humid_mode != idx;
+		gs_rd.humid_mode = idx;
 	}
 	if (!isnan(val = json_get_number(req, "temp_sp_heat",
 	    TEMP_SP_HEAT_MIN/10.0, TEMP_SP_HEAT_MAX/10.0, NAN))) {
 		int x = val * 10.0;
-		chg |= rd_inst.temp_sp_heat != x;
-		rd_inst.temp_sp_heat = x;
+		chg |= gs_rd.temp_sp_heat != x;
+		gs_rd.temp_sp_heat = x;
 	}
 	if (!isnan(val = json_get_number(req, "temp_sp_cool",
 	    TEMP_SP_COOL_MIN/10.0, TEMP_SP_COOL_MAX/10.0, NAN))) {
 		int x = val * 10.0;
-		chg |= rd_inst.temp_sp_cool != x;
-		rd_inst.temp_sp_cool = x;
+		chg |= gs_rd.temp_sp_cool != x;
+		gs_rd.temp_sp_cool = x;
 	}
 	if (!isnan(val = json_get_number(req, "humid_sp",
 	    HUMID_SP_MIN/10.0, HUMID_SP_MAX/10.0, NAN))) {
 		int x = val * 10.0;
-		chg |= rd_inst.humid_sp != x;
-		rd_inst.humid_sp = x;
+		chg |= gs_rd.humid_sp != x;
+		gs_rd.humid_sp = x;
 	}
 	if (chg)
-		rd_inst.sync = 2;
+		gs_rd.sync = 2;
 	pthread_mutex_unlock(&rd_mutex);
 
 	cJSON_Delete(req);
@@ -901,11 +901,11 @@ out_stop:
 	mg_exit_library();
 
 	/*
-	 * Handle pending rd_inst sync, in case rd_inst has been modified after
+	 * Handle pending gs_rd sync, in case gs_rd has been modified after
 	 * we got the stop signal or shortly before. At this point all extra
 	 * threads (civetweb) are stopped, so no locking is needed.
 	 */
-	if (rd_inst.sync)
+	if (gs_rd.sync)
 		nvram_write();
 
 	/*
