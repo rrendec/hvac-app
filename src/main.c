@@ -89,6 +89,8 @@ struct gpiod_line_bulk bulk;
 modbus_t *mb;
 /* end of hw handles */
 
+static enum std_on_off heat_cool_state = STD_OFF;
+
 static inline const char *cfg_get_string(const char *key, const char *_default)
 {
 	return json_get_string(config, key, _default);
@@ -382,41 +384,13 @@ static int telemetry_prep_send(struct timeval tv,
 	return telemetry_send(&td);
 }
 
-int loop_1_sec(void)
+/*
+ * Update furnace state. Called with gs_mutex locked.
+ */
+static void furnace_update(const struct sensor_data *sd)
 {
-	static enum std_on_off heat_cool_state = STD_OFF;
-	static int sens_cnt, sens_fail, humid_cnt, humid_duty;
 	static int old_furnace_mode = FURNACE_OFF;
-	static int old_erv_mode = ERV_OFF;
-	static int old_humid_mode = INT_MAX;
-	static int furnace_holdoff, humid_holdoff;
-	static enum std_on_off erv_state;
-	static int erv_timer;
-
-	struct sensor_data sd = {.valid = 0};
-	struct run_data rd;
-	struct timeval tv;
-
-	gettimeofday(&tv, NULL);
-
-	if (sens_cnt) {
-		sens_cnt = (sens_cnt + 1) % 5;
-		sd = gs_sd;
-	} else if (sensor_read(mb, &sd)) {
-		if (sens_fail++ >= 30) {
-			xprintf(SD_ERR "Sensor failure\n");
-			return 1;
-		}
-	} else {
-		sens_fail = 0;
-		sensors_print(&sd);
-		pthread_mutex_lock(&gs_mutex);
-		gs_sd = sd;
-		pthread_mutex_unlock(&gs_mutex);
-		sens_cnt++;
-	}
-
-	pthread_mutex_lock(&gs_mutex);
+	static int furnace_holdoff;
 
 	if (gs_rd.furnace_mode != old_furnace_mode) {
 		xprintf(SD_NOTICE "Furnace mode: %s\n",
@@ -444,16 +418,16 @@ int loop_1_sec(void)
 			furnace_holdoff--;
 			break;
 		}
-		if (!sd.valid)
+		if (!sd->valid)
 			break;
-		if (sd.temp_avg >= gs_rd.temp_sp_heat + gs_rd.temp_thres &&
+		if (sd->temp_avg >= gs_rd.temp_sp_heat + gs_rd.temp_thres &&
 		    heat_cool_state == STD_ON) {
 			xprintf(SD_NOTICE "HEAT OFF\n");
 			gs_cd.furnace_heat = STD_OFF;
 			heat_cool_state = STD_OFF;
 			break;
 		}
-		if (sd.temp_avg <= gs_rd.temp_sp_heat - gs_rd.temp_thres &&
+		if (sd->temp_avg <= gs_rd.temp_sp_heat - gs_rd.temp_thres &&
 		    heat_cool_state == STD_OFF) {
 			xprintf(SD_NOTICE "HEAT ON\n");
 			gs_cd.furnace_heat = STD_ON;
@@ -467,16 +441,16 @@ int loop_1_sec(void)
 			furnace_holdoff--;
 			break;
 		}
-		if (!sd.valid)
+		if (!sd->valid)
 			break;
-		if (sd.temp_avg >= gs_rd.temp_sp_cool + gs_rd.temp_thres &&
+		if (sd->temp_avg >= gs_rd.temp_sp_cool + gs_rd.temp_thres &&
 		    heat_cool_state == STD_OFF) {
 			xprintf(SD_NOTICE "COOL ON\n");
 			gs_cd.furnace_cool = STD_ON;
 			heat_cool_state = STD_ON;
 			break;
 		}
-		if (sd.temp_avg <= gs_rd.temp_sp_cool - gs_rd.temp_thres &&
+		if (sd->temp_avg <= gs_rd.temp_sp_cool - gs_rd.temp_thres &&
 		    heat_cool_state == STD_ON) {
 			xprintf(SD_NOTICE "COOL OFF\n");
 			gs_cd.furnace_cool = STD_OFF;
@@ -484,6 +458,16 @@ int loop_1_sec(void)
 		}
 		break;
 	}
+}
+
+/*
+ * Update ERV state. Called with gs_mutex locked.
+ */
+static void erv_update(void)
+{
+	static int old_erv_mode = ERV_OFF;
+	static enum std_on_off erv_state;
+	static int erv_timer;
 
 	if (gs_rd.erv_mode != old_erv_mode) {
 		xprintf(SD_NOTICE "ERV mode: %s\n",
@@ -492,7 +476,6 @@ int loop_1_sec(void)
 		erv_timer = 0;
 		old_erv_mode = gs_rd.erv_mode;
 	}
-
 
 	switch (gs_rd.erv_mode) {
 	case ERV_OFF:
@@ -536,6 +519,16 @@ int loop_1_sec(void)
 		gs_cd.erv_high = STD_ON;
 		break;
 	}
+}
+
+/*
+ * Update humidifier state. Called with gs_mutex locked.
+ */
+static void humid_update(void)
+{
+	static int humid_cnt, humid_duty;
+	static int old_humid_mode = INT_MAX;
+	static int humid_holdoff;
 
 	if (gs_rd.humid_mode != old_humid_mode && !humid_holdoff) {
 		xprintf(SD_NOTICE "Humidifier mode: %s\n",
@@ -573,6 +566,40 @@ int loop_1_sec(void)
 		gs_cd.humid_d_close = STD_OFF;
 		gs_cd.humid_d_open = STD_OFF;
 	}
+}
+
+int loop_1_sec(void)
+{
+	static int sens_cnt, sens_fail;
+
+	struct sensor_data sd = {.valid = 0};
+	struct run_data rd;
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
+
+	if (sens_cnt) {
+		sens_cnt = (sens_cnt + 1) % 5;
+		sd = gs_sd;
+	} else if (sensor_read(mb, &sd)) {
+		if (sens_fail++ >= 30) {
+			xprintf(SD_ERR "Sensor failure\n");
+			return 1;
+		}
+	} else {
+		sens_fail = 0;
+		sensors_print(&sd);
+		pthread_mutex_lock(&gs_mutex);
+		gs_sd = sd;
+		pthread_mutex_unlock(&gs_mutex);
+		sens_cnt++;
+	}
+
+	pthread_mutex_lock(&gs_mutex);
+
+	furnace_update(&sd);
+	erv_update();
+	humid_update();
 
 	rd = gs_rd;
 
