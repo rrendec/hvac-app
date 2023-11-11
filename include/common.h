@@ -65,4 +65,20 @@ extern __thread volatile int __canceled;
 #define STATIC_STRNCMP(ptr, str) 						\
 	strncmp((ptr), str, sizeof(str) - 1)
 
+/*
+ * Round integer division for int type operands
+ */
+static inline int rdivi(int x, int d)
+{
+	return (x < 0 ? x - d / 2 : x + d / 2) / d;
+}
+
+/*
+ * Integer signum function for int type values
+ */
+static inline int sgni(int x)
+{
+	return (x > 0) - (x < 0);
+}
+
 #endif

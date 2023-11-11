@@ -21,7 +21,8 @@ enum erv_mode {
 	ERV_I40MH,	// Intermittent - 40 min/hour
 	ERV_LOW,	// Always on, low speed
 	ERV_HIGH,	// Always on, high speed
-	ERV_MAX = ERV_HIGH
+	ERV_AUTO,	// Automatic control
+	ERV_MAX = ERV_AUTO
 };
 
 enum std_on_off {

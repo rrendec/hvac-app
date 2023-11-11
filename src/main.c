@@ -35,6 +35,9 @@ enum http_methods {
 #define TEMP_SP_COOL_MAX	350
 #define HUMID_SP_MIN		100
 #define HUMID_SP_MAX		500
+#define FURNACE_HOLDOFF_S	5
+#define ERV_HOLDOFF_S		600
+#define EXT_STALE_S		3600
 
 const char * const rd_furnace_map[] = {
 	[FURNACE_OFF]	= "off",
@@ -51,6 +54,7 @@ const char * const rd_erv_map[] = {
 	[ERV_I40MH]	= "i40mh",
 	[ERV_LOW]	= "low",
 	[ERV_HIGH]	= "high",
+	[ERV_AUTO]	= "auto",
 };
 
 const char * const std_on_off_map[] = {
@@ -70,6 +74,40 @@ const struct {
 	[ERV_I20MH] = {20 * 60, 40 * 60},
 	[ERV_I30MH] = {30 * 60, 30 * 60},
 	[ERV_I40MH] = {40 * 60, 20 * 60},
+};
+
+const struct {
+	int temp_offset;
+	enum erv_mode erv_mode;
+} erv_temp_map[] = {
+	{-450,	ERV_I20MH},
+	{-360,	ERV_I30MH},
+	{-270,	ERV_I40MH},
+	{-180,	ERV_LOW},
+	{-90,	ERV_HIGH},
+	{20,	ERV_LOW},
+	{40,	ERV_I40MH},
+	{60,	ERV_I30MH},
+	{80,	ERV_I20MH},
+	{100,	ERV_OFF}
+};
+
+#define ERV_SPEED_OFF	0
+#define ERV_SPEED_LOW	1
+#define ERV_SPEED_HIGH  2
+#define ERV_SPEED_MASK	3
+#define ERV_DAMPER_OPEN	4
+#define ERV_INTERM	8
+
+const int erv_mode_flags[] = {
+	[ERV_OFF]	= ERV_SPEED_OFF,
+	[ERV_RECIRC]	= ERV_SPEED_HIGH,
+	[ERV_I20MH]	= ERV_SPEED_LOW | ERV_DAMPER_OPEN | ERV_INTERM,
+	[ERV_I30MH]	= ERV_SPEED_LOW | ERV_DAMPER_OPEN | ERV_INTERM,
+	[ERV_I40MH]	= ERV_SPEED_LOW | ERV_DAMPER_OPEN | ERV_INTERM,
+	[ERV_LOW]	= ERV_SPEED_LOW | ERV_DAMPER_OPEN,
+	[ERV_HIGH]	= ERV_SPEED_HIGH | ERV_DAMPER_OPEN,
+	[ERV_AUTO]	= 0, /* not a real mode */
 };
 
 pthread_mutex_t oestream_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -395,7 +433,7 @@ static void furnace_update(const struct sensor_data *sd)
 	if (gs_rd.furnace_mode != old_furnace_mode) {
 		xprintf(SD_NOTICE "Furnace mode: %s\n",
 			rd_furnace_map[gs_rd.furnace_mode]);
-		furnace_holdoff = 5;
+		furnace_holdoff = FURNACE_HOLDOFF_S;
 		heat_cool_state = STD_OFF;
 		old_furnace_mode = gs_rd.furnace_mode;
 	}
@@ -460,24 +498,156 @@ static void furnace_update(const struct sensor_data *sd)
 	}
 }
 
+static enum erv_mode erv_auto_temp(const struct sensor_data *_sd,
+				   struct timeval now)
+{
+	static bool init;
+	static int avg;
+	static enum erv_mode last_mode;
+	static time_t last_dt;
+	static struct sensor_data sd;
+
+	int thres, ref, i;
+	enum erv_mode curr_mode;
+
+	if (_sd->valid)
+		sd = *_sd;
+
+	if (now.tv_sec - gs_ed.dt > EXT_STALE_S) {
+		init = false;
+		return ERV_I30MH;
+	}
+
+	if (init && gs_ed.dt == last_dt)
+		return last_mode;
+
+	/*
+	 * Assignments from _sd to sd are already validated, but there is still
+	 * the case when we have never seen valid data in _sd.
+	 */
+	if (!sd.valid)
+		return ERV_I30MH;
+
+	if (init) {
+		int anew = rdivi(avg * 9 + gs_ed.temp, 10);
+		int delta = anew - avg;
+
+		avg = anew;
+		thres = sgni(delta) * 5;
+	} else {
+		avg = gs_ed.temp;
+		thres = 0;
+		init = true;
+	}
+
+	ref = sd.temp_avg;
+	if (gs_rd.furnace_mode == FURNACE_HEAT)
+		ref = gs_rd.temp_sp_heat;
+	if (gs_rd.furnace_mode == FURNACE_COOL)
+		ref = gs_rd.temp_sp_cool;
+
+	curr_mode = ERV_OFF;
+	for (i = 0; i < ARRAY_SIZE(erv_temp_map); i++)
+		if (gs_ed.temp >= ref + erv_temp_map[i].temp_offset + thres)
+			curr_mode = erv_temp_map[i].erv_mode;
+		else
+			break;
+
+	last_dt = gs_ed.dt;
+	last_mode = curr_mode;
+
+	return curr_mode;
+}
+
+static enum erv_mode erv_auto_aqi(struct timeval now)
+{
+	// TODO
+	return ERV_HIGH;
+}
+
+/*
+ * Allow smooth transitions between intermittent states. Instead of resetting
+ * the timer and turning the ERV off immediately, let the current cycle finish
+ * and transition to the new delay values starting with the next cycle.
+ */
+static bool erv_interm_fallthrough(enum erv_mode em_old, enum erv_mode em_new)
+{
+	const int fl_old = erv_mode_flags[em_old];
+	const int fl_new = erv_mode_flags[em_new];
+
+	return (fl_old & ERV_INTERM) && (fl_new & ERV_INTERM);
+}
+
+/*
+ * Determine if we need to wait for the holdoff timer when we transition
+ * between two ERV modes. The assumption is that em_new != em_old.
+ */
+static bool erv_holdoff(enum erv_mode em_new, enum erv_mode em_old,
+			int erv_holdoff_tmr, enum std_on_off erv_state)
+{
+	int fl_old = erv_mode_flags[em_old];
+	int fl_new = erv_mode_flags[em_new];
+
+	if (!erv_holdoff_tmr || erv_interm_fallthrough(em_old, em_new))
+		return false;
+
+	/* For intermittent modes, update the old state if the ERV is off */
+	if ((fl_old & ERV_INTERM) && erv_state == STD_OFF)
+		fl_old &= !ERV_SPEED_MASK & !ERV_DAMPER_OPEN;
+
+	/* For intermittent modes, the new state starts with an off cycle */
+	if ((fl_new & ERV_INTERM))
+		fl_new &= !ERV_SPEED_MASK & !ERV_DAMPER_OPEN;
+
+	return (fl_new & ERV_SPEED_MASK) != (fl_old & ERV_SPEED_MASK) ||
+	       (fl_new & ERV_DAMPER_OPEN) != (fl_old & ERV_DAMPER_OPEN);
+}
+
 /*
  * Update ERV state. Called with gs_mutex locked.
  */
-static void erv_update(void)
+static void erv_update(const struct sensor_data *sd, struct timeval now)
 {
-	static int old_erv_mode = ERV_OFF;
+	static enum erv_mode set_mode = ERV_OFF;
+	static enum erv_mode old_mode = ERV_OFF;
 	static enum std_on_off erv_state;
-	static int erv_timer;
+	static int erv_interm_tmr;
+	static int erv_holdoff_tmr;
 
-	if (gs_rd.erv_mode != old_erv_mode) {
-		xprintf(SD_NOTICE "ERV mode: %s\n",
+	enum erv_mode act_mode;
+
+	if (gs_rd.erv_mode != set_mode) {
+		xprintf(SD_NOTICE "ERV set mode: %s\n",
 			rd_erv_map[gs_rd.erv_mode]);
-		erv_state = STD_ON;
-		erv_timer = 0;
-		old_erv_mode = gs_rd.erv_mode;
+		set_mode = gs_rd.erv_mode;
 	}
 
-	switch (gs_rd.erv_mode) {
+	if (gs_rd.erv_mode == ERV_AUTO) {
+		enum erv_mode m_temp = erv_auto_temp(sd, now);
+		enum erv_mode m_aqi = erv_auto_aqi(now);
+		act_mode = MIN(m_temp, m_aqi);
+	} else
+		act_mode = gs_rd.erv_mode;
+
+	if (erv_holdoff_tmr)
+		erv_holdoff_tmr--;
+
+	if (act_mode != old_mode) {
+		if (erv_holdoff(act_mode, old_mode, erv_holdoff_tmr, erv_state))
+			act_mode = old_mode;
+		else {
+			xprintf(SD_NOTICE "ERV actual mode: %s\n",
+				rd_erv_map[act_mode]);
+			if (!erv_interm_fallthrough(act_mode, old_mode)) {
+				erv_state = STD_ON;
+				erv_interm_tmr = 0;
+				erv_holdoff_tmr = ERV_HOLDOFF_S;
+			}
+			old_mode = act_mode;
+		}
+	}
+
+	switch (act_mode) {
 	case ERV_OFF:
 		gs_cd.erv_off = STD_ON;
 		gs_cd.erv_recirc = STD_OFF;
@@ -493,13 +663,14 @@ static void erv_update(void)
 	case ERV_I20MH:
 	case ERV_I30MH:
 	case ERV_I40MH:
-		if (erv_timer > 0)
-			erv_timer--;
+		if (erv_interm_tmr > 0)
+			erv_interm_tmr--;
 		else {
 			erv_state = !erv_state;
-			erv_timer = erv_state ?
-				    erv_int_map[gs_rd.erv_mode].run_time_s:
-				    erv_int_map[gs_rd.erv_mode].off_time_s;
+			erv_interm_tmr = erv_state ?
+					 erv_int_map[act_mode].run_time_s:
+					 erv_int_map[act_mode].off_time_s;
+			erv_holdoff_tmr = ERV_HOLDOFF_S;
 		}
 		gs_cd.erv_off = STD_OFF;
 		gs_cd.erv_recirc = STD_OFF;
@@ -518,6 +689,8 @@ static void erv_update(void)
 		gs_cd.erv_low = STD_OFF;
 		gs_cd.erv_high = STD_ON;
 		break;
+	case ERV_AUTO:
+		xassert(0, NOOP);
 	}
 }
 
@@ -598,7 +771,7 @@ int loop_1_sec(void)
 	pthread_mutex_lock(&gs_mutex);
 
 	furnace_update(&sd);
-	erv_update();
+	erv_update(&sd, tv);
 	humid_update();
 
 	rd = gs_rd;
