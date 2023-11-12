@@ -672,7 +672,7 @@ static void erv_update(const struct sensor_data *sd, struct timeval now)
 					 erv_int_map[act_mode].off_time_s;
 			erv_holdoff_tmr = ERV_HOLDOFF_S;
 		}
-		gs_cd.erv_off = STD_OFF;
+		gs_cd.erv_off = !erv_state;
 		gs_cd.erv_recirc = STD_OFF;
 		gs_cd.erv_low = erv_state;
 		gs_cd.erv_high = STD_OFF;
