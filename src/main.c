@@ -245,6 +245,12 @@ read2:
 	usleep(200000);
 	rc = modbus_read_registers(mb, 34, 2, reg);
 	xassert(rc != -1, ret = errno, "%d", errno);
+	/*
+	 * Temco XDUCER-D-TH quirk: sometimes the reported values are
+	 * T=130.0 H=100.0, even though the modbus read is successful.
+	 */
+	xassert(reg[0] < 1300 && reg[1] < 1000, ret = ERANGE,
+		"%d %d", reg[0], reg[1]);
 	data->temp2 = reg[0];
 	data->humid2 = reg[1];
 
