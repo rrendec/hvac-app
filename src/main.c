@@ -498,6 +498,40 @@ static void furnace_update(const struct sensor_data *sd)
 	}
 }
 
+/*
+ * Determine the optimal ERV mode based on the outdoor temperature
+ *
+ * Since we have no control over how the outdoor temperature varies, hysteresis
+ * around the threshold values in erv_temp_map[] is simulated by adding an
+ * offset. The absolute value of the offset is fixed, and the sign depends on
+ * the outdoor temperature trend.
+ *
+ * The outdoor temperature trend is determined by calculating a weighted average
+ * of the outdoor temperature samples. If the current average value is higher
+ * than the previous average value, the outdoor temperature has gone up. If the
+ * current value is lower than the previous value, the temperature has gone
+ * down. The purpose of the weighted average is to eliminate small oscillations
+ * of the outdoor temperature, for example due to measurement errors.
+ *
+ * The weighted average is used only to determine the outdoor temperature trend.
+ * The current value of the outdoor temperature (the most recent sample) is
+ * still used to determine the optimal ERV mode based on erv_temp_map[]. The
+ * reason is that the weighted average tends to converge slower.
+ *
+ * Fixed-point arithmetic with a precision factor of k is used for the weighted
+ * average. Using integer arithmetic alone can lead to weird situations when the
+ * average converges to a value that is way of to the actual value of the
+ * temperature samples, if the temperature is almost constant. For example, if
+ * the average is 3.8 and the temperature samples are 3.3 (note that fixed-point
+ * arithmetic with a precision of decimal 0.1 is used, and the actual values in
+ * the program are 38 and 33 respectively) and a weight of 9:1 is used, the
+ * formula to calculate a new value of avg from the existing value and the
+ * temperature sample is:
+ *     avg = (avg * 9 + sample + 5) / 10
+ * where avg = 38 and sample = 33. The extra +5 is there to round the integer
+ * division. So, avg = (38 * 9 + 33 + 5) / 10 = (38 * 9 + 38) / 10 =
+ * 38 * 10 / 10 = 38.
+ */
 static enum erv_mode erv_auto_temp(const struct sensor_data *_sd,
 				   struct timeval now)
 {
@@ -506,6 +540,11 @@ static enum erv_mode erv_auto_temp(const struct sensor_data *_sd,
 	static enum erv_mode last_mode;
 	static time_t last_dt;
 	static struct sensor_data sd;
+
+	/* Fixed-point arithmetic precision for average calculation */
+	const int k = 0x10000;
+	/* Absolute value of temperature threshold, in units of 0.1 C */
+	const int th_abs = 5;
 
 	int thres, ref, i;
 	enum erv_mode curr_mode;
@@ -529,13 +568,12 @@ static enum erv_mode erv_auto_temp(const struct sensor_data *_sd,
 		return ERV_I30MH;
 
 	if (init) {
-		int anew = rdivi(avg * 9 + gs_ed.temp, 10);
-		int delta = anew - avg;
+		int anew = rdivi(avg * 7 + gs_ed.temp * k, 8);
 
+		thres = th_abs * sgni(anew - avg);
 		avg = anew;
-		thres = sgni(delta) * 5;
 	} else {
-		avg = gs_ed.temp;
+		avg = gs_ed.temp * k;
 		thres = 0;
 		init = true;
 	}
