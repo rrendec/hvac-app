@@ -36,6 +36,7 @@ enum http_methods {
 #define HUMID_SP_MIN		100
 #define HUMID_SP_MAX		500
 #define FURNACE_HOLDOFF_S	5
+#define ERV_STARTUP_DELAY_S	5
 #define ERV_HOLDOFF_S		600
 #define EXT_STALE_S		3600
 
@@ -651,6 +652,7 @@ static void erv_update(const struct sensor_data *sd, struct timeval now)
 	static enum std_on_off erv_state;
 	static int erv_interm_tmr;
 	static int erv_holdoff_tmr;
+	static int erv_startup_tmr;
 
 	enum erv_mode act_mode;
 
@@ -666,6 +668,11 @@ static void erv_update(const struct sensor_data *sd, struct timeval now)
 		act_mode = MIN(m_temp, m_aqi);
 	} else
 		act_mode = gs_rd.erv_mode;
+
+	if (erv_startup_tmr < ERV_STARTUP_DELAY_S) {
+		erv_startup_tmr++;
+		return;
+	}
 
 	if (erv_holdoff_tmr)
 		erv_holdoff_tmr--;
