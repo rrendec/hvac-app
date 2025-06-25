@@ -39,6 +39,10 @@ enum http_methods {
 #define ERV_STARTUP_DELAY_S	5
 #define ERV_HOLDOFF_S		600
 #define EXT_STALE_S		3600
+#define WEIGHT_TEMP1		1
+#define WEIGHT_TEMP2		1
+#define WEIGHT_HUMID1		1
+#define WEIGHT_HUMID2		0
 
 const char * const rd_furnace_map[] = {
 	[FURNACE_OFF]	= "off",
@@ -257,13 +261,12 @@ read2:
 	if (ret)
 		return ret;
 
-#if 0
-	data->temp_avg = (data->temp1 + 3 * data->temp2) / 4;
-	data->humid_avg = (data->humid1 + 3 * data->humid2) / 4;
-#else
-	data->temp_avg = data->temp1;
-	data->humid_avg = data->humid1;
-#endif
+	data->temp_avg =
+		(data->temp1 * WEIGHT_TEMP1 + data->temp2 * WEIGHT_TEMP2) /
+		(WEIGHT_TEMP1 + WEIGHT_TEMP2);
+	data->humid_avg =
+		(data->humid1 * WEIGHT_HUMID1 + data->humid2 * WEIGHT_HUMID2) /
+		(WEIGHT_HUMID1 + WEIGHT_HUMID2);
 	data->valid = 1;
 
 	return 0;
