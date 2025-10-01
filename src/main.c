@@ -81,20 +81,26 @@ const struct {
 	[ERV_I40MH] = {40 * 60, 20 * 60},
 };
 
+enum erv_temp_idx {
+	ERV_TEMP_IDX_FAN,
+	ERV_TEMP_IDX_HEAT_COOL,
+	ERV_TEMP_IDX_SIZE
+};
+
 const struct {
-	int temp_offset;
+	int temp_offset[ERV_TEMP_IDX_SIZE];
 	enum erv_mode erv_mode;
 } erv_temp_map[] = {
-	{-450,	ERV_I20MH},
-	{-360,	ERV_I30MH},
-	{-270,	ERV_I40MH},
-	{-180,	ERV_LOW},
-	{-90,	ERV_HIGH},
-	{20,	ERV_LOW},
-	{40,	ERV_I40MH},
-	{60,	ERV_I30MH},
-	{80,	ERV_I20MH},
-	{100,	ERV_OFF}
+	{{-100,	-450},	ERV_I20MH},
+	{{ -80,	-360},	ERV_I30MH},
+	{{ -60,	-270},	ERV_I40MH},
+	{{ -40,	-180},	ERV_LOW},
+	{{ -20,	 -90},	ERV_HIGH},
+	{{  20,	  20},	ERV_LOW},
+	{{  40,	  40},	ERV_I40MH},
+	{{  60,	  60},	ERV_I30MH},
+	{{  80,	  80},	ERV_I20MH},
+	{{ 100,	 100},	ERV_OFF}
 };
 
 #define ERV_SPEED_OFF	0
@@ -542,14 +548,12 @@ static void furnace_update(const struct sensor_data *sd)
  * division. So, avg = (38 * 9 + 33 + 5) / 10 = (38 * 9 + 38) / 10 =
  * 38 * 10 / 10 = 38.
  */
-static enum erv_mode erv_auto_temp(const struct sensor_data *_sd,
-				   struct timeval now)
+static enum erv_mode erv_auto_temp(struct timeval now)
 {
 	static bool init;
 	static int avg;
 	static enum erv_mode last_mode;
 	static time_t last_dt;
-	static struct sensor_data sd;
 
 	/* Fixed-point arithmetic precision for average calculation */
 	const int k = 0x10000;
@@ -558,9 +562,7 @@ static enum erv_mode erv_auto_temp(const struct sensor_data *_sd,
 
 	int thres, ref, i;
 	enum erv_mode curr_mode;
-
-	if (_sd->valid)
-		sd = *_sd;
+	enum erv_temp_idx tx;
 
 	if (now.tv_sec - gs_ed.dt > EXT_STALE_S) {
 		init = false;
@@ -569,13 +571,6 @@ static enum erv_mode erv_auto_temp(const struct sensor_data *_sd,
 
 	if (init && gs_ed.dt == last_dt)
 		return last_mode;
-
-	/*
-	 * Assignments from _sd to sd are already validated, but there is still
-	 * the case when we have never seen valid data in _sd.
-	 */
-	if (!sd.valid)
-		return ERV_I30MH;
 
 	if (init) {
 		int anew = rdivi(avg * 7 + gs_ed.temp * k, 8);
@@ -588,15 +583,20 @@ static enum erv_mode erv_auto_temp(const struct sensor_data *_sd,
 		init = true;
 	}
 
-	ref = sd.temp_avg;
-	if (gs_rd.furnace_mode == FURNACE_HEAT)
+	ref = (gs_rd.temp_sp_heat + gs_rd.temp_sp_cool) / 2;
+	tx = ERV_TEMP_IDX_FAN;
+	if (gs_rd.furnace_mode == FURNACE_HEAT) {
 		ref = gs_rd.temp_sp_heat;
-	if (gs_rd.furnace_mode == FURNACE_COOL)
+		tx = ERV_TEMP_IDX_HEAT_COOL;
+	}
+	if (gs_rd.furnace_mode == FURNACE_COOL) {
 		ref = gs_rd.temp_sp_cool;
+		tx = ERV_TEMP_IDX_HEAT_COOL;
+	}
 
 	curr_mode = ERV_OFF;
 	for (i = 0; i < ARRAY_SIZE(erv_temp_map); i++)
-		if (gs_ed.temp >= ref + erv_temp_map[i].temp_offset + thres)
+		if (gs_ed.temp >= ref + erv_temp_map[i].temp_offset[tx] + thres)
 			curr_mode = erv_temp_map[i].erv_mode;
 		else
 			break;
@@ -654,7 +654,7 @@ static bool erv_holdoff(enum erv_mode em_new, enum erv_mode em_old,
 /*
  * Update ERV state. Called with gs_mutex locked.
  */
-static void erv_update(const struct sensor_data *sd, struct timeval now)
+static void erv_update(struct timeval now)
 {
 	static enum erv_mode set_mode = ERV_OFF;
 	static enum erv_mode old_mode = ERV_OFF;
@@ -672,7 +672,7 @@ static void erv_update(const struct sensor_data *sd, struct timeval now)
 	}
 
 	if (gs_rd.erv_mode == ERV_AUTO) {
-		enum erv_mode m_temp = erv_auto_temp(sd, now);
+		enum erv_mode m_temp = erv_auto_temp(now);
 		enum erv_mode m_aqi = erv_auto_aqi(now);
 		act_mode = MIN(m_temp, m_aqi);
 	} else
@@ -825,7 +825,7 @@ int loop_1_sec(void)
 	pthread_mutex_lock(&gs_mutex);
 
 	furnace_update(&sd);
-	erv_update(&sd, tv);
+	erv_update(tv);
 	humid_update();
 
 	rd = gs_rd;
