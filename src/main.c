@@ -127,7 +127,7 @@ cJSON *telemetry_cfg;
 cJSON *memcache_cfg;
 
 unsigned int gpio_pin_map[NUM_GPIO_PINS] = GPIO_MAP_INITIALIZER;
-const int gpio_def_val[NUM_GPIO_PINS] = {[0 ... NUM_GPIO_PINS - 1] = 1};
+int gpio_def_val[NUM_GPIO_PINS] = {[0 ... NUM_GPIO_PINS - 1] = 1};
 
 volatile int keep_going = 1;
 volatile pid_t child_pid;
@@ -314,6 +314,21 @@ int gpio_init(void)
 
 void gpio_cleanup(void)
 {
+	int rc;
+
+	/*
+	 * Turn everything off. For the ERV, put out an "off" command first to
+	 * make sure it's really off, because it remembers the last command it
+	 * has seen when all pins are released.
+	 */
+	gpio_def_val[GPIO_ERV_OFF] = 0;
+	rc = gpiod_line_set_value_bulk(&bulk, gpio_def_val);
+	xassert(!rc, NOOP, "%d", errno);
+	usleep(200000);
+	gpio_def_val[GPIO_ERV_OFF] = 1;
+	rc = gpiod_line_set_value_bulk(&bulk, gpio_def_val);
+	xassert(!rc, NOOP, "%d", errno);
+
 	gpiod_line_release_bulk(&bulk);
 	gpiod_chip_close(chip);
 }
@@ -1165,13 +1180,6 @@ out_stop:
 	if (gs_rd.sync)
 		nvram_write(&gs_rd);
 
-	/*
-	 * Turn the furnace off. GPIO pins keep their state, and we must make
-	 * sure we don't leave heating or cooling running.
-	 */
-	rc = gpiod_line_set_value_bulk(&bulk, gpio_def_val);
-	xassert(!rc, NOOP, "%d", errno);
-
 	gpio_cleanup();
 	modbus_cleanup();
 
@@ -1280,10 +1288,6 @@ int main(int argc, char **argv)
 		xprintf(SD_ERR "Worker terminated abnormally... cleaning up\n");
 		rc = gpio_init();
 		xassert(!rc, return EXIT_FAILURE, "%d", rc);
-		/*
-		 * No explicit pin control. Calling gpio_init() is enough to put
-		 * all output pins in a clean state. See function comment.
-		 */
 		gpio_cleanup();
 	}
 
