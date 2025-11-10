@@ -16,6 +16,7 @@ struct telemetry_data {
 		float temp_sp_cool;
 		float temp_thres;
 		float humid_sp;
+		float humid_thres;
 	} run;
 
 	struct {

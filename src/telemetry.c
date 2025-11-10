@@ -39,6 +39,7 @@ static int format_data(char **buf, size_t *len, const struct telemetry_data *d)
 	fprintf(f, "hvac.run.temp_sp_cool %.1f %lld\n", d->run.temp_sp_cool, ts);
 	fprintf(f, "hvac.run.temp_thres %.1f %lld\n", d->run.temp_thres, ts);
 	fprintf(f, "hvac.run.humid_sp %.1f %lld\n", d->run.humid_sp, ts);
+	fprintf(f, "hvac.run.humid_thres %.1f %lld\n", d->run.humid_thres, ts);
 	fprintf(f, "hvac.ctrl.furnace_blow %u %lld\n", d->ctrl.furnace_blow, ts);
 	fprintf(f, "hvac.ctrl.furnace_heat %u %lld\n", d->ctrl.furnace_heat, ts);
 	fprintf(f, "hvac.ctrl.furnace_cool %u %lld\n", d->ctrl.furnace_cool, ts);

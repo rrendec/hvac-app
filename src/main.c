@@ -42,7 +42,7 @@ enum http_methods {
 #define WEIGHT_TEMP1		1
 #define WEIGHT_TEMP2		1
 #define WEIGHT_HUMID1		1
-#define WEIGHT_HUMID2		0
+#define WEIGHT_HUMID2		1
 
 const char * const rd_furnace_map[] = {
 	[FURNACE_OFF]	= "off",
@@ -419,6 +419,7 @@ static int telemetry_prep_send(struct timeval tv,
 			.temp_sp_cool = rd->temp_sp_cool / 10.0f,
 			.temp_thres = rd->temp_thres / 10.0f,
 			.humid_sp = rd->humid_sp / 10.0f,
+			.humid_thres = rd->humid_thres / 10.0f,
 		},
 
 		.ctrl = {
@@ -766,8 +767,9 @@ static void erv_update(struct timeval now)
 /*
  * Update humidifier state. Called with gs_mutex locked.
  */
-static void humid_update(void)
+static void humid_update(const struct sensor_data *sd)
 {
+	static int humid_state = STD_OFF;
 	static int humid_cnt, humid_duty;
 	static int old_humid_mode = INT_MAX;
 	static int humid_holdoff;
@@ -783,22 +785,37 @@ static void humid_update(void)
 
 	if (gs_rd.humid_mode == STD_ON && gs_rd.furnace_mode != FURNACE_OFF &&
 	    !humid_holdoff) {
+		if (sd->humid_avg >= gs_rd.humid_sp + gs_rd.humid_thres &&
+		    humid_state == STD_ON) {
+			xprintf(SD_NOTICE "Humidifier OFF\n");
+			humid_state = STD_OFF;
+		}
+		if (sd->humid_avg <= gs_rd.humid_sp - gs_rd.humid_thres &&
+		    humid_state == STD_OFF) {
+			xprintf(SD_NOTICE "Humidifier ON\n");
+			humid_state = STD_ON;
+		}
+
 		if (heat_cool_state == STD_ON) {
 			gs_cd.humid_fan = STD_OFF;
 			humid_duty = gs_rd.furnace_mode == FURNACE_HEAT ? 20 : 10;
 		} else {
-			gs_cd.humid_fan = STD_ON;
+			gs_cd.humid_fan = humid_state;
 			humid_duty = 10;
 		}
 
 		if (humid_cnt == 0)
-			gs_cd.humid_valve = STD_ON;
+			gs_cd.humid_valve = humid_state;
 		else if (humid_cnt >= humid_duty)
 			gs_cd.humid_valve = STD_OFF;
 		humid_cnt = (humid_cnt + 1) % 30;
 	} else {
 		gs_cd.humid_fan = STD_OFF;
 		gs_cd.humid_valve = STD_OFF;
+		if (humid_state == STD_ON) {
+			xprintf(SD_NOTICE "Humidifier OFF\n");
+			humid_state = STD_OFF;
+		}
 		humid_cnt = 0;
 	}
 
@@ -841,7 +858,7 @@ int loop_1_sec(void)
 
 	furnace_update(&sd);
 	erv_update(tv);
-	humid_update();
+	humid_update(&sd);
 
 	rd = gs_rd;
 

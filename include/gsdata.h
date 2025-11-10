@@ -40,6 +40,7 @@ struct run_data {
 	int temp_sp_cool;
 	int temp_thres;
 	int humid_sp;
+	int humid_thres;
 	// sync to disk delay counter
 	int sync;
 };
