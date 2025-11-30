@@ -229,8 +229,14 @@ int nvram_write(const struct run_data *rd)
 
 int sensor_read(modbus_t *mb, struct sensor_data *data)
 {
+	cJSON *cal, *item;
 	uint16_t reg[2];
 	int rc, ret = 0;
+
+	// Note: Calibration data in configuration is sparse and can be missing
+	//       altogether. All cJSON functions play nice with NULL pointers,
+	//       and any value not explicitly defined defaults gracefully to 0.
+	cal = cJSON_GetObjectItem(config, "cal");
 
 	memset(data, 0, sizeof(*data));
 
@@ -245,8 +251,9 @@ int sensor_read(modbus_t *mb, struct sensor_data *data)
 	usleep(10000);
 	rc = modbus_read_registers(mb, 0, 2, reg);
 	xassert(rc != -1, ret = errno, "%d", errno);
-	data->temp1 = reg[1];
-	data->humid1 = reg[0];
+	item = cJSON_GetArrayItem(cal, 0);
+	data->temp1 = (int)json_get_number(item, "t", NAN, NAN, 0) + reg[1];
+	data->humid1 = (int)json_get_number(item, "h", NAN, NAN, 0) + reg[0];
 
 read2:
 	rc = modbus_set_slave(mb, 2);
@@ -261,8 +268,9 @@ read2:
 	 */
 	xassert(reg[0] < 1300 && reg[1] < 1000, ret = ERANGE,
 		"%d %d", reg[0], reg[1]);
-	data->temp2 = reg[0];
-	data->humid2 = reg[1];
+	item = cJSON_GetArrayItem(cal, 1);
+	data->temp2 = (int)json_get_number(item, "t", NAN, NAN, 0) + reg[0];
+	data->humid2 = (int)json_get_number(item, "h", NAN, NAN, 0) + reg[1];
 
 	if (ret)
 		return ret;

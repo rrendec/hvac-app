@@ -10,5 +10,9 @@
 	"memcache": {
 		"host": "localhost",
 		"port": 11211
-	}
+	},
+	"cal": [
+		{"t": 0, "h": 0},
+		{"t": 0, "h": 0}
+	]
 }
