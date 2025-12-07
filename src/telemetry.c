@@ -59,6 +59,8 @@ static int format_data(char **buf, size_t *len, const struct telemetry_data *d)
 		fprintf(f, "hvac.sens.th2.temp %.1f %lld\n", d->sens.temp2, ts);
 	if (!isnan(d->sens.humid2))
 		fprintf(f, "hvac.sens.th2.humid %.1f %lld\n", d->sens.humid2, ts);
+	fprintf(f, "hvac.extras.erv_mode %u %lld\n", d->extras.erv_mode, ts);
+	fprintf(f, "hvac.extras.humid_state %u %lld\n", d->extras.humid_state, ts);
 	fclose(f);
 
 	return 0;

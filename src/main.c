@@ -29,6 +29,8 @@ enum http_methods {
 	NUM_HTTP_METHODS
 };
 
+typedef typeof((struct telemetry_data){}.extras) telemetry_extras_t;
+
 #define TEMP_SP_HEAT_MIN	100
 #define TEMP_SP_HEAT_MAX	300
 #define TEMP_SP_COOL_MIN	150
@@ -414,7 +416,8 @@ void gpio_state_sync(void)
 static int telemetry_prep_send(struct timeval tv,
 				const struct run_data *rd,
 				const struct ctrl_data *cd,
-				const struct sensor_data *sd)
+				const struct sensor_data *sd,
+				const telemetry_extras_t *extras)
 {
 	struct telemetry_data td = {
 		.tv = tv,
@@ -450,6 +453,8 @@ static int telemetry_prep_send(struct timeval tv,
 			.temp2 = NAN,
 			.humid2 = NAN,
 		},
+
+		.extras = *extras,
 	};
 
 	if (sd->valid) {
@@ -678,7 +683,7 @@ static bool erv_holdoff(enum erv_mode em_new, enum erv_mode em_old,
 /*
  * Update ERV state. Called with gs_mutex locked.
  */
-static void erv_update(struct timeval now)
+static void erv_update(struct timeval now, telemetry_extras_t *extras)
 {
 	static enum erv_mode set_mode = ERV_OFF;
 	static enum erv_mode old_mode = ERV_OFF;
@@ -704,6 +709,7 @@ static void erv_update(struct timeval now)
 
 	if (erv_startup_tmr < ERV_STARTUP_DELAY_S) {
 		erv_startup_tmr++;
+		extras->erv_mode = ERV_OFF;
 		return;
 	}
 
@@ -770,12 +776,14 @@ static void erv_update(struct timeval now)
 	case ERV_AUTO:
 		xassert(0, NOOP);
 	}
+
+	extras->erv_mode = act_mode;
 }
 
 /*
  * Update humidifier state. Called with gs_mutex locked.
  */
-static void humid_update(const struct sensor_data *sd)
+static void humid_update(const struct sensor_data *sd, telemetry_extras_t *extras)
 {
 	static int humid_state = STD_OFF;
 	static int humid_cnt, humid_duty;
@@ -833,6 +841,8 @@ static void humid_update(const struct sensor_data *sd)
 		gs_cd.humid_d_close = STD_OFF;
 		gs_cd.humid_d_open = STD_OFF;
 	}
+
+	extras->humid_state = humid_state;
 }
 
 int loop_1_sec(void)
@@ -842,6 +852,7 @@ int loop_1_sec(void)
 	struct sensor_data sd = {.valid = 0};
 	struct run_data rd;
 	struct timeval tv;
+	telemetry_extras_t extras = {};
 
 	gettimeofday(&tv, NULL);
 
@@ -865,8 +876,8 @@ int loop_1_sec(void)
 	pthread_mutex_lock(&gs_mutex);
 
 	furnace_update(&sd);
-	erv_update(tv);
-	humid_update(&sd);
+	erv_update(tv, &extras);
+	humid_update(&sd, &extras);
 
 	rd = gs_rd;
 
@@ -889,7 +900,7 @@ int loop_1_sec(void)
 	gpio_state_sync();
 
 	if (telemetry_cfg)
-		telemetry_prep_send(tv, &rd, &gs_cd, &sd);
+		telemetry_prep_send(tv, &rd, &gs_cd, &sd, &extras);
 
 	return 0;
 }

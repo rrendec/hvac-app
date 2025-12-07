@@ -39,6 +39,11 @@ struct telemetry_data {
 		float temp2;
 		float humid2;
 	} sens;
+
+	struct {
+		int erv_mode;
+		int humid_state;
+	} extras;
 };
 
 int telemetry_init(cJSON *cfg);
