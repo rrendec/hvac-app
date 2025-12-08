@@ -802,12 +802,12 @@ static void humid_update(const struct sensor_data *sd, telemetry_extras_t *extra
 	if (gs_rd.humid_mode == STD_ON && gs_rd.furnace_mode != FURNACE_OFF &&
 	    !humid_holdoff) {
 		if (sd->humid_avg >= gs_rd.humid_sp + gs_rd.humid_thres &&
-		    humid_state == STD_ON) {
+		    sd->valid && humid_state == STD_ON) {
 			xprintf(SD_NOTICE "Humidifier OFF\n");
 			humid_state = STD_OFF;
 		}
 		if (sd->humid_avg <= gs_rd.humid_sp - gs_rd.humid_thres &&
-		    humid_state == STD_OFF) {
+		    sd->valid && humid_state == STD_OFF) {
 			xprintf(SD_NOTICE "Humidifier ON\n");
 			humid_state = STD_ON;
 		}
