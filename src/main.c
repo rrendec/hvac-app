@@ -35,8 +35,12 @@ typedef typeof((struct telemetry_data){}.extras) telemetry_extras_t;
 #define TEMP_SP_HEAT_MAX	300
 #define TEMP_SP_COOL_MIN	150
 #define TEMP_SP_COOL_MAX	350
+#define TEMP_THRES_MIN		1
+#define TEMP_THRES_MAX		10
 #define HUMID_SP_MIN		100
 #define HUMID_SP_MAX		500
+#define HUMID_THRES_MIN		1
+#define HUMID_THRES_MAX		30
 #define FURNACE_HOLDOFF_S	5
 #define ERV_STARTUP_DELAY_S	5
 #define ERV_HOLDOFF_S		600
@@ -184,8 +188,12 @@ int nvram_read(struct run_data *rd)
 		TEMP_SP_HEAT_MIN, TEMP_SP_HEAT_MAX, rd->temp_sp_heat);
 	rd->temp_sp_cool = json_get_number(json, "temp_sp_cool",
 		TEMP_SP_COOL_MIN, TEMP_SP_COOL_MAX, rd->temp_sp_cool);
+	rd->temp_thres = json_get_number(json, "temp_thres",
+		TEMP_THRES_MIN, TEMP_THRES_MAX, rd->temp_thres);
 	rd->humid_sp = json_get_number(json, "humid_sp",
 		HUMID_SP_MIN, HUMID_SP_MAX, rd->humid_sp);
+	rd->humid_thres = json_get_number(json, "humid_thres",
+		HUMID_THRES_MIN, HUMID_THRES_MAX, rd->humid_thres);
 
 	cJSON_Delete(json);
 
@@ -213,7 +221,9 @@ int nvram_write(const struct run_data *rd)
 	cJSON_AddItemToObject(json, "erv_mode", cJSON_CreateNumber(rd->erv_mode));
 	cJSON_AddItemToObject(json, "temp_sp_heat", cJSON_CreateNumber(rd->temp_sp_heat));
 	cJSON_AddItemToObject(json, "temp_sp_cool", cJSON_CreateNumber(rd->temp_sp_cool));
+	cJSON_AddItemToObject(json, "temp_thres", cJSON_CreateNumber(rd->temp_thres));
 	cJSON_AddItemToObject(json, "humid_sp", cJSON_CreateNumber(rd->humid_sp));
+	cJSON_AddItemToObject(json, "humid_thres", cJSON_CreateNumber(rd->humid_thres));
 
 	cfg_path = nvram_path();
 	if (asprintf(&tmp_path, "%s~", cfg_path) >= 0) {
