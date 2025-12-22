@@ -11,7 +11,7 @@ struct run_data gs_rd = {
 	.temp_sp_cool = 250,	// 25.0 C
 	.temp_thres = 5,	// 0.5 C
 	.humid_sp = 350,	// 35.0 %
-	.humid_thres = 25,	// 2.5 %
+	.humid_thres = 10,	// 1.0 %
 };
 
 /* Global control data */
