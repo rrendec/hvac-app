@@ -53,7 +53,7 @@ The following features/functions are already implemented:
 ## Install required packages (Debian/Ubuntu/Raspbian)
 
 ```
-sudo apt install cmake libmodbus-dev libgpiod-dev libsystemd-dev civetweb libcivetweb-dev libcjson-dev
+sudo apt install cmake cmake-curses-gui libmodbus-dev libgpiod-dev libsystemd-dev civetweb libcivetweb-dev libcjson-dev
 ```
 
 ## Install required packages (Fedora)
