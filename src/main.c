@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <assert.h>
 #include <string.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <gpiod.h>
 #include <time.h>
