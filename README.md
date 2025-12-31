@@ -59,44 +59,8 @@ sudo apt install cmake cmake-curses-gui libmodbus-dev libgpiod-dev libsystemd-de
 ## Install required packages (Fedora)
 
 ```
-sudo dnf install cmake libmodbus-devel libgpiod-devel systemd-devel cjson-devel
+sudo dnf install cmake libmodbus-devel libgpiod-devel systemd-devel civetweb-devel cjson-devel
 ```
-
-### civetweb
-
-Get the source code:
-```
-git clone https://github.com/civetweb/civetweb.git
-cd civetweb
-git checkout v1.13
-```
-
-Build:
-```
-cmake -B output/build -DCMAKE_BUILD_TYPE=None -DCIVETWEB_BUILD_TESTING=OFF -DBUILD_SHARED_LIBS=ON
-make -C output/build
-cmake -DCMAKE_INSTALL_PREFIX=output/install -P output/build/cmake_install.cmake
-```
-
-Install:
-```
-sudo cp -df output/install/bin/civetweb /usr/local/bin/
-sudo cp -df output/install/include/civetweb.h /usr/local/include/
-sudo cp -df output/install/lib64/libcivetweb.* /usr/local/lib64/
-```
-
-Add `/usr/local/lib64` to the linker path (temporarily):
-```
-sudo ldconfig /usr/local/lib64
-```
-
-Add `/usr/local/lib64` to the linker path (permanently):
-```
-echo /usr/local/lib64 | sudo tee /etc/ld.so.conf.d/local.conf
-sudo ldconfig
-```
-
-See [RHBZ #144967](https://bugzilla.redhat.com/show_bug.cgi?id=144967)
 
 # Build instructions
 
