@@ -6,6 +6,8 @@
 #include <pthread.h>
 #include <systemd/sd-daemon.h>
 
+#include "compiler.h"
+
 extern pthread_mutex_t oestream_mutex;
 
 #define NOOP ((void)0)
