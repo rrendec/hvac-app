@@ -22,6 +22,7 @@ set(hvac_LIBS civetweb cjson pthread m)
 if(WITH_EMULATOR)
 	list(APPEND hvac_SOURCES src/emulator.c)
 else()
+	list(APPEND hvac_SOURCES src/gpioutil.c)
 	list(APPEND hvac_LIBS gpiod modbus)
 endif()
 

@@ -9,69 +9,108 @@
 
 /* {{{ gpio */
 
-struct gpiod_line;
+/*
+ * This is not a complete or true emulation. Multiple assumptions are made about
+ * implementation details in gpio_init() and gpio_state_sync() (in src/main.c).
+ *   - The initialization is done in a linear sequence, one chip at a time.
+ *   - All lines are set to output and active low, and the initial line value is
+ *     "inactive". The data in struct gpiod_line_settings is not stored anywhere.
+ */
 
-#define gpio_to_line(chip, offset) ((struct gpiod_line *)			\
-	(((unsigned long)(chip) << 16) | ((offset) & 0xffff)))
-#define gpio_line_chip(line)							\
-	((unsigned int)((unsigned long)(line) >> 16))
-#define gpio_line_offset(line)							\
-	((unsigned int)((unsigned long)(line) & 0xffff))
+#define MAX_LINES 32
 
-static const char * const gpio_path = "emu/gpio.txt";
-
-struct gpiod_chip *gpiod_chip_open_by_label(const char *label)
-{
-	return (struct gpiod_chip *)1UL;
-}
-
-int gpiod_chip_get_lines(struct gpiod_chip *chip,
-			 unsigned int *offsets, unsigned int num_offsets,
-			 struct gpiod_line_bulk *bulk)
-{
-	unsigned int i;
-
-	for (i = 0; i < num_offsets; i++)
-		bulk->lines[i] = gpio_to_line(chip, offsets[i]);
-
-	bulk->num_lines = num_offsets;
-
-	return 0;
-}
-
-int gpiod_line_request_output(struct gpiod_line *line,
-			      const char *consumer, int default_val)
-{
-	gpiod_line_set_value(line, default_val);
-
-	return 0;
-}
-
-int gpiod_line_request_bulk_output(struct gpiod_line_bulk *bulk,
-				   const char *consumer,
-				   const int *default_vals)
-{
-	int i, rc;
-
-	for (i = 0; i < bulk->num_lines; i++) {
-		rc = gpiod_line_request_output(bulk->lines[i], consumer,
-					       default_vals[i]);
-		if (rc)
-			return rc;
+#define DEF_DUMMY_FN_INT(fn, ...) int fn(__VA_ARGS__)				\
+	{									\
+		return 0;							\
 	}
 
+#define DEF_DUMMY_FN_VOID(fn, ...) void fn(__VA_ARGS__) {}
+
+#define DEF_DUMMY_ALLOC(type, fn, ...) type fn(__VA_ARGS__)			\
+	{									\
+		return (type)1UL;						\
+	}
+
+#define DEF_DUMMY_FREE(type, fn) DEF_DUMMY_FN_VOID(fn, type)
+
+static const char * const gpio_path = "emu/gpio.txt";
+static unsigned int num_lines;
+static unsigned int line_map[MAX_LINES];
+static unsigned int dummy_req_idx;
+
+DEF_DUMMY_ALLOC(struct gpiod_chip *, gpiod_chip_open_by_label, const char *pattern)
+DEF_DUMMY_FREE(struct gpiod_chip *, gpiod_chip_close)
+
+DEF_DUMMY_ALLOC(struct gpiod_chip_info *, gpiod_chip_get_info, struct gpiod_chip *chip)
+DEF_DUMMY_FREE(struct gpiod_chip_info *, gpiod_chip_info_free)
+
+DEF_DUMMY_ALLOC(struct gpiod_line_settings *, gpiod_line_settings_new, void)
+DEF_DUMMY_FREE(struct gpiod_line_settings *, gpiod_line_settings_free)
+
+DEF_DUMMY_ALLOC(struct gpiod_line_config *, gpiod_line_config_new, void)
+DEF_DUMMY_FREE(struct gpiod_line_config *, gpiod_line_config_free)
+
+DEF_DUMMY_ALLOC(struct gpiod_request_config *, gpiod_request_config_new, void)
+DEF_DUMMY_FREE(struct gpiod_request_config *, gpiod_request_config_free)
+
+DEF_DUMMY_FN_INT(gpiod_line_settings_set_direction,
+		 struct gpiod_line_settings *settings, enum gpiod_line_direction direction)
+DEF_DUMMY_FN_VOID(gpiod_line_settings_set_active_low,
+		  struct gpiod_line_settings *settings, bool active_low)
+DEF_DUMMY_FN_INT(gpiod_line_settings_set_output_value,
+		 struct gpiod_line_settings *settings, enum gpiod_line_value value)
+
+int gpiod_line_config_add_line_settings(struct gpiod_line_config *config,
+	const unsigned int *offsets, size_t num_offsets, struct gpiod_line_settings *settings)
+{
+	if (num_offsets > MAX_LINES) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	memcpy(line_map, offsets, num_offsets * sizeof(unsigned int));
+	num_lines = num_offsets;
+
 	return 0;
 }
 
-int gpiod_line_set_value(struct gpiod_line *line, int value)
+DEF_DUMMY_FN_VOID(gpiod_request_config_set_consumer,
+	struct gpiod_request_config *config, const char *consumer)
+
+struct gpiod_line_request *gpiod_chip_request_lines(struct gpiod_chip *chip,
+	struct gpiod_request_config *req_cfg, struct gpiod_line_config *line_cfg)
+{
+	void *req = (void *)(unsigned long)++dummy_req_idx;
+	enum gpiod_line_value values[MAX_LINES] = {};
+
+	gpiod_line_request_set_values(req, values);
+
+	return req;
+}
+
+DEF_DUMMY_FREE(struct gpiod_line_request *request, gpiod_line_request_release)
+
+static int find_offset(unsigned int offset)
+{
+	int idx;
+
+	for (idx = 0; idx < num_lines; idx++)
+		if (line_map[idx] == offset)
+			return idx;
+
+	return -1;
+}
+
+int gpiod_line_request_set_values(struct gpiod_line_request *request,
+				  const enum gpiod_line_value *values)
 {
 	char tmp[PATH_MAX];
 	char buf[120], *p;
-	unsigned int chip = gpio_line_chip(line);
-	unsigned int offset = gpio_line_offset(line);
+	unsigned int chip = (unsigned long)request;
 	unsigned int xchip, xoffset, xvalue;
-	int fd = -1, append = 1, ret;
+	int fd = -1, idx, ret;
 	FILE *in = NULL, *out = NULL;
+	bool found[MAX_LINES] = {};
 
 	in = fopen(gpio_path, "r");
 	xassert(in, return errno, "%d", errno);
@@ -90,9 +129,9 @@ int gpiod_line_set_value(struct gpiod_line *line, int value)
 			*p = '\0';
 
 		if (sscanf(buf, "%u %u %u", &xchip, &xoffset, &xvalue) == 3 &&
-			xchip == chip && xoffset == offset) {
-			fprintf(out, "%u %u %u\n", chip, offset, value);
-			append = 0;
+			xchip == chip && (idx = find_offset(xoffset)) >= 0) {
+			fprintf(out, "%u %u %u\n", chip, xoffset, !values[idx]);
+			found[idx] = true;
 			continue;
 		}
 
@@ -102,8 +141,9 @@ int gpiod_line_set_value(struct gpiod_line *line, int value)
 		fputs(buf, out);
 	}
 
-	if (append)
-		fprintf(out, "%u %u %u\n", chip, offset, value);
+	for (idx = 0; idx < num_lines; idx++)
+		if (!found[idx])
+			fprintf(out, "%u %u %u\n", chip, line_map[idx], !values[idx]);
 
 	fclose(in);
 	fclose(out);
@@ -127,27 +167,6 @@ out_unlink:
 		unlink(tmp);
 
 	return ret;
-}
-
-int gpiod_line_set_value_bulk(struct gpiod_line_bulk *bulk, const int *values)
-{
-	int i, rc;
-
-	for (i = 0; i < bulk->num_lines; i++) {
-		rc = gpiod_line_set_value(bulk->lines[i], values[i]);
-		if (rc)
-			return rc;
-	}
-
-	return 0;
-}
-
-void gpiod_line_release_bulk(struct gpiod_line_bulk *bulk)
-{
-}
-
-void gpiod_chip_close(struct gpiod_chip *chip)
-{
 }
 
 /* }}} gpio */

@@ -21,6 +21,7 @@
 #include "json.h"
 #include "telemetry.h"
 #include "memcache.h"
+#include "gpioutil.h"
 
 __thread volatile int __canceled;
 
@@ -133,15 +134,12 @@ cJSON *config;
 cJSON *telemetry_cfg;
 cJSON *memcache_cfg;
 
-unsigned int gpio_pin_map[NUM_GPIO_PINS] = GPIO_MAP_INITIALIZER;
-int gpio_def_val[NUM_GPIO_PINS] = {[0 ... NUM_GPIO_PINS - 1] = 1};
-
 volatile int keep_going = 1;
 volatile pid_t child_pid;
 
 /* hw handles below */
-struct gpiod_chip *chip;
-struct gpiod_line_bulk bulk;
+struct gpiod_chip *gpio_chip;
+struct gpiod_line_request *gpio_req;
 modbus_t *mb;
 /* end of hw handles */
 
@@ -312,29 +310,51 @@ void usr2_sig_hdlr(int signal)
 	__canceled = 1;
 }
 
-/**
- * @note gpiod_line_request_bulk_output() additionally sets the pin state.
- *       The side effect is that we initialize the output pins in a clean
- *       state. For example, the furnace is turned off by default.
- */
 int gpio_init(void)
 {
+	unsigned int pin_map[NUM_GPIO_PINS] = GPIO_MAP_INITIALIZER;
+	struct gpiod_line_settings *settings = NULL;
+	struct gpiod_line_config *line_cfg = NULL;
+	struct gpiod_request_config *req_cfg = NULL;
+	int ret = 0;
 	int rc;
 
-	chip = gpiod_chip_open_by_label(GPIO_CHIP_LABEL);
-	xassert(chip, return errno, "%d", errno);
+	gpio_chip = gpiod_chip_open_by_label(GPIO_CHIP_LABEL);
+	xassert(gpio_chip, return ENODEV);
 
-	rc = gpiod_chip_get_lines(chip, gpio_pin_map, NUM_GPIO_PINS, &bulk);
-	xassert(!rc, return errno, "%d", errno);
+	/* These are all unlikely to fail but we handle the error path anyway */
+	settings = gpiod_line_settings_new();
+	xassert(settings, {ret = errno; goto out_free;}, "%d", errno);
+	line_cfg = gpiod_line_config_new();
+	xassert(line_cfg, {ret = errno; goto out_free;}, "%d", errno);
+	req_cfg = gpiod_request_config_new();
+	xassert(req_cfg, {ret = errno; goto out_free;}, "%d", errno);
 
-	rc = gpiod_line_request_bulk_output(&bulk, "hvac", gpio_def_val);
-	xassert(!rc, return errno, "%d", errno);
+	/* These can only fail if we pass invalid values, which we don't */
+	gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_OUTPUT);
+	gpiod_line_settings_set_active_low(settings, true);
+	gpiod_line_settings_set_output_value(settings, GPIOD_LINE_VALUE_INACTIVE);
 
-	return 0;
+	/* Note: gpiod_line_config_add_line_settings() *copies* the data from `settings`. */
+	rc = gpiod_line_config_add_line_settings(line_cfg, pin_map, NUM_GPIO_PINS, settings);
+	xassert(!rc, {ret = errno; goto out_free;}, "%d", errno);
+
+	/* Note: gpiod_chip_request_lines() *copies* the data from `req_cfg` and `line_cfg`. */
+	gpiod_request_config_set_consumer(req_cfg, "hvac");
+	gpio_req = gpiod_chip_request_lines(gpio_chip, req_cfg, line_cfg);
+	xassert(gpio_req, ret = errno, "%d", errno);
+
+out_free:
+	gpiod_request_config_free(req_cfg);
+	gpiod_line_config_free(line_cfg);
+	gpiod_line_settings_free(settings);
+
+	return ret;
 }
 
 void gpio_cleanup(void)
 {
+	enum gpiod_line_value values[NUM_GPIO_PINS] = {};
 	int rc;
 
 	/*
@@ -342,16 +362,16 @@ void gpio_cleanup(void)
 	 * make sure it's really off, because it remembers the last command it
 	 * has seen when all pins are released.
 	 */
-	gpio_def_val[GPIO_ERV_OFF] = 0;
-	rc = gpiod_line_set_value_bulk(&bulk, gpio_def_val);
+	values[GPIO_ERV_OFF] = GPIOD_LINE_VALUE_ACTIVE;
+	rc = gpiod_line_request_set_values(gpio_req, values);
 	xassert(!rc, NOOP, "%d", errno);
 	usleep(200000);
-	gpio_def_val[GPIO_ERV_OFF] = 1;
-	rc = gpiod_line_set_value_bulk(&bulk, gpio_def_val);
+	values[GPIO_ERV_OFF] = GPIOD_LINE_VALUE_INACTIVE;
+	rc = gpiod_line_request_set_values(gpio_req, values);
 	xassert(!rc, NOOP, "%d", errno);
 
-	gpiod_line_release_bulk(&bulk);
-	gpiod_chip_close(chip);
+	gpiod_line_request_release(gpio_req);
+	gpiod_chip_close(gpio_chip);
 }
 
 int modbus_init(void)
@@ -405,21 +425,20 @@ int sensors_once(void)
  */
 void gpio_state_sync(void)
 {
-	const int values[NUM_GPIO_PINS] = {
-		[GPIO_FURNACE_BLOW]	= !gs_cd.furnace_blow,
-		[GPIO_FURNACE_HEAT]	= !gs_cd.furnace_heat,
-		[GPIO_FURNACE_COOL]	= !gs_cd.furnace_cool,
-		[GPIO_HUMID_D_CLOSE]	= !gs_cd.humid_d_close,
-		[GPIO_HUMID_D_OPEN]	= !gs_cd.humid_d_open,
-		[GPIO_HUMID_FAN]	= !gs_cd.humid_fan,
-		[GPIO_HUMID_VALVE]	= !gs_cd.humid_valve,
-		[GPIO_ERV_OFF]		= !gs_cd.erv_off,
-		[GPIO_ERV_RECIRC]	= !gs_cd.erv_recirc,
-		[GPIO_ERV_LOW]		= !gs_cd.erv_low,
-		[GPIO_ERV_HIGH]		= !gs_cd.erv_high,
+	const enum gpiod_line_value values[NUM_GPIO_PINS] = {
+		[GPIO_FURNACE_BLOW]	= gs_cd.furnace_blow,
+		[GPIO_FURNACE_HEAT]	= gs_cd.furnace_heat,
+		[GPIO_FURNACE_COOL]	= gs_cd.furnace_cool,
+		[GPIO_HUMID_D_CLOSE]	= gs_cd.humid_d_close,
+		[GPIO_HUMID_D_OPEN]	= gs_cd.humid_d_open,
+		[GPIO_HUMID_FAN]	= gs_cd.humid_fan,
+		[GPIO_HUMID_VALVE]	= gs_cd.humid_valve,
+		[GPIO_ERV_OFF]		= gs_cd.erv_off,
+		[GPIO_ERV_RECIRC]	= gs_cd.erv_recirc,
+		[GPIO_ERV_LOW]		= gs_cd.erv_low,
+		[GPIO_ERV_HIGH]		= gs_cd.erv_high,
 	};
-
-	int rc = gpiod_line_set_value_bulk(&bulk, values);
+	int rc = gpiod_line_request_set_values(gpio_req, values);
 
 	xassert(!rc, NOOP, "%d", errno);
 }
