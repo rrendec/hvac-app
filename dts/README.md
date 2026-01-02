@@ -2,7 +2,12 @@ This directory contains Device Tree overlays for various boards.
 
 # Raspberry Pi
 
-Add the following line to `/boot/config.txt`:
+Run the command below to build the Device Tree overlay:
+```
+dtc -o rpi-hvac.dtbo rpi-hvac.dtso
+```
+
+Add the following line to `/boot/firmware/config.txt` to enable it:
 ```
 dtoverlay=rpi-hvac
 ```
