@@ -138,7 +138,10 @@ volatile int keep_going = 1;
 volatile pid_t child_pid;
 
 /* hw handles below */
-struct gpiod_chip *gpio_chip;
+struct {
+	char label[20];
+	struct gpiod_chip *chip;
+} gpio_chip_map[2];
 struct gpiod_line_request *gpio_req;
 modbus_t *mb;
 /* end of hw handles */
@@ -310,17 +313,49 @@ void usr2_sig_hdlr(int signal)
 	__canceled = 1;
 }
 
+struct gpiod_chip *gpio_chip_get_by_label(const char *label)
+{
+	struct gpiod_chip *chip = NULL;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(gpio_chip_map) && gpio_chip_map[i].chip; i++)
+		if (!strcmp(label, gpio_chip_map[i].label))
+			return gpio_chip_map[i].chip;
+
+	if (i >= ARRAY_SIZE(gpio_chip_map)) {
+		errno = ENOMEM;
+		return NULL;
+	}
+
+	chip = gpiod_chip_open_by_label(label);
+	if (chip) {
+		STATIC_STRLCPY(gpio_chip_map[i].label, label);
+		gpio_chip_map[i].chip = chip;
+	}
+
+	return chip;
+}
+
+void gpio_chip_close_all(void)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(gpio_chip_map) && gpio_chip_map[i].chip; i++)
+		gpiod_chip_close(gpio_chip_map[i].chip);
+}
+
 int gpio_init(void)
 {
 	unsigned int pin_map[NUM_GPIO_PINS] = GPIO_MAP_INITIALIZER;
+	struct gpiod_chip *chip;
 	struct gpiod_line_settings *settings = NULL;
 	struct gpiod_line_config *line_cfg = NULL;
 	struct gpiod_request_config *req_cfg = NULL;
 	int ret = 0;
 	int rc;
 
-	gpio_chip = gpiod_chip_open_by_label(GPIO_CHIP_LABEL);
-	xassert(gpio_chip, return ENODEV);
+	chip = gpio_chip_get_by_label(GPIO_CHIP_LABEL);
+	xassert(chip, {ret = errno; goto out_free;}, "%d", errno);
 
 	/* These are all unlikely to fail but we handle the error path anyway */
 	settings = gpiod_line_settings_new();
@@ -341,13 +376,16 @@ int gpio_init(void)
 
 	/* Note: gpiod_chip_request_lines() *copies* the data from `req_cfg` and `line_cfg`. */
 	gpiod_request_config_set_consumer(req_cfg, "hvac");
-	gpio_req = gpiod_chip_request_lines(gpio_chip, req_cfg, line_cfg);
+	gpio_req = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
 	xassert(gpio_req, ret = errno, "%d", errno);
 
 out_free:
 	gpiod_request_config_free(req_cfg);
 	gpiod_line_config_free(line_cfg);
 	gpiod_line_settings_free(settings);
+
+	if (ret)
+		gpio_chip_close_all();
 
 	return ret;
 }
@@ -371,7 +409,7 @@ void gpio_cleanup(void)
 	xassert(!rc, NOOP, "%d", errno);
 
 	gpiod_line_request_release(gpio_req);
-	gpiod_chip_close(gpio_chip);
+	gpio_chip_close_all();
 }
 
 int modbus_init(void)

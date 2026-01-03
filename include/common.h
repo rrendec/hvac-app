@@ -65,7 +65,10 @@ extern __thread volatile int __canceled;
 #define STATIC_STRLEN(str) (sizeof(str) - 1)
 
 #define STATIC_STRNCMP(ptr, str) 						\
-	strncmp((ptr), str, sizeof(str) - 1)
+	strncmp((ptr), (str), STATIC_STRLEN(str))
+
+#define STATIC_STRLCPY(dest, src)						\
+	snprintf((dest), sizeof(dest), "%s", (src))
 
 /*
  * Round integer division for int type operands

@@ -13,11 +13,15 @@
  * This is not a complete or true emulation. Multiple assumptions are made about
  * implementation details in gpio_init() and gpio_state_sync() (in src/main.c).
  *   - The initialization is done in a linear sequence, one chip at a time.
- *   - All lines are set to output and active low, and the initial line value is
- *     "inactive". The data in struct gpiod_line_settings is not stored anywhere.
+ *   - All lines are active low, and the initial value for output lines is
+ *     "inactive". The data in struct gpiod_line_settings is ignored.
+ *   - Only one tuple of line settings object and pin array is added per each
+ *     line configuration object (gpiod_line_config_add_line_settings() is
+ *     called only once for each line configuration object).
  */
 
-#define MAX_LINES 32
+#define MAX_REQUESTS	3
+#define MAX_LINES	32
 
 #define DEF_DUMMY_FN_INT(fn, ...) int fn(__VA_ARGS__)				\
 	{									\
@@ -34,11 +38,19 @@
 #define DEF_DUMMY_FREE(type, fn) DEF_DUMMY_FN_VOID(fn, type)
 
 static const char * const gpio_path = "emu/gpio.txt";
-static unsigned int num_lines;
-static unsigned int line_map[MAX_LINES];
-static unsigned int dummy_req_idx;
+static struct {
+	unsigned int chip_idx;
+	unsigned int offsets[MAX_LINES];
+	unsigned int num_offsets;
+	enum gpiod_line_direction direction;
+} req_map[MAX_REQUESTS];
+static unsigned long dummy_chip_idx;
+static unsigned long dummy_request_idx;
 
-DEF_DUMMY_ALLOC(struct gpiod_chip *, gpiod_chip_open_by_label, const char *pattern)
+struct gpiod_chip *gpiod_chip_open_by_label(const char *label)
+{
+	return (void *)++dummy_chip_idx;
+}
 DEF_DUMMY_FREE(struct gpiod_chip *, gpiod_chip_close)
 
 DEF_DUMMY_ALLOC(struct gpiod_chip_info *, gpiod_chip_get_info, struct gpiod_chip *chip)
@@ -53,8 +65,12 @@ DEF_DUMMY_FREE(struct gpiod_line_config *, gpiod_line_config_free)
 DEF_DUMMY_ALLOC(struct gpiod_request_config *, gpiod_request_config_new, void)
 DEF_DUMMY_FREE(struct gpiod_request_config *, gpiod_request_config_free)
 
-DEF_DUMMY_FN_INT(gpiod_line_settings_set_direction,
-		 struct gpiod_line_settings *settings, enum gpiod_line_direction direction)
+int gpiod_line_settings_set_direction(struct gpiod_line_settings *settings,
+				      enum gpiod_line_direction direction)
+{
+	req_map[dummy_request_idx].direction = direction;
+	return 0;
+}
 DEF_DUMMY_FN_VOID(gpiod_line_settings_set_active_low,
 		  struct gpiod_line_settings *settings, bool active_low)
 DEF_DUMMY_FN_INT(gpiod_line_settings_set_output_value,
@@ -68,8 +84,9 @@ int gpiod_line_config_add_line_settings(struct gpiod_line_config *config,
 		return -1;
 	}
 
-	memcpy(line_map, offsets, num_offsets * sizeof(unsigned int));
-	num_lines = num_offsets;
+	req_map[dummy_request_idx].chip_idx = dummy_chip_idx;
+	memcpy(req_map[dummy_request_idx].offsets, offsets, num_offsets * sizeof(unsigned int));
+	req_map[dummy_request_idx].num_offsets = num_offsets;
 
 	return 0;
 }
@@ -80,22 +97,42 @@ DEF_DUMMY_FN_VOID(gpiod_request_config_set_consumer,
 struct gpiod_line_request *gpiod_chip_request_lines(struct gpiod_chip *chip,
 	struct gpiod_request_config *req_cfg, struct gpiod_line_config *line_cfg)
 {
-	void *req = (void *)(unsigned long)++dummy_req_idx;
-	enum gpiod_line_value values[MAX_LINES] = {};
+	unsigned long req_idx = dummy_request_idx;
 
-	gpiod_line_request_set_values(req, values);
+	/* sanity check */
+	if ((unsigned long)chip != dummy_chip_idx) {
+		errno = EINVAL;
+		return NULL;
+	}
 
-	return req;
+	/*
+	 * Increment the request idx counter. At the cost of wasting the last
+	 * req_map slot, we check the bounds here to avoid checking it in each
+	 * setter function that stores settings for the *next* request.
+	 */
+	if (++dummy_request_idx >= MAX_REQUESTS) {
+		errno = ENOMEM;
+		return NULL;
+	}
+
+	/* set initial state for output pins */
+	if (req_map[req_idx].direction == GPIOD_LINE_DIRECTION_OUTPUT) {
+		enum gpiod_line_value values[MAX_LINES] = {};
+		if (gpiod_line_request_set_values((void *)(req_idx + 1), values))
+			return NULL;
+	}
+
+	return (void *)dummy_request_idx;
 }
 
 DEF_DUMMY_FREE(struct gpiod_line_request *request, gpiod_line_request_release)
 
-static int find_offset(unsigned int offset)
+static int find_offset(const typeof(req_map[0]) *req, unsigned int offset)
 {
 	int idx;
 
-	for (idx = 0; idx < num_lines; idx++)
-		if (line_map[idx] == offset)
+	for (idx = 0; idx < req->num_offsets; idx++)
+		if (req->offsets[idx] == offset)
 			return idx;
 
 	return -1;
@@ -106,11 +143,22 @@ int gpiod_line_request_set_values(struct gpiod_line_request *request,
 {
 	char tmp[PATH_MAX];
 	char buf[120], *p;
-	unsigned int chip = (unsigned long)request;
+	unsigned long req_idx = (unsigned long)request - 1;
+	const typeof(req_map[0]) *req = &req_map[req_idx];
 	unsigned int xchip, xoffset, xvalue;
 	int fd = -1, idx, ret;
 	FILE *in = NULL, *out = NULL;
 	bool found[MAX_LINES] = {};
+
+	if (req_idx >= dummy_request_idx) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (req->direction != GPIOD_LINE_DIRECTION_OUTPUT) {
+		errno = EINVAL;
+		return -1;
+	}
 
 	in = fopen(gpio_path, "r");
 	xassert(in, return errno, "%d", errno);
@@ -129,8 +177,8 @@ int gpiod_line_request_set_values(struct gpiod_line_request *request,
 			*p = '\0';
 
 		if (sscanf(buf, "%u %u %u", &xchip, &xoffset, &xvalue) == 3 &&
-			xchip == chip && (idx = find_offset(xoffset)) >= 0) {
-			fprintf(out, "%u %u %u\n", chip, xoffset, !values[idx]);
+			xchip == req->chip_idx && (idx = find_offset(req, xoffset)) >= 0) {
+			fprintf(out, "%u %u %u\n", xchip, xoffset, !values[idx]);
 			found[idx] = true;
 			continue;
 		}
@@ -141,9 +189,10 @@ int gpiod_line_request_set_values(struct gpiod_line_request *request,
 		fputs(buf, out);
 	}
 
-	for (idx = 0; idx < num_lines; idx++)
+	for (idx = 0; idx < req->num_offsets; idx++)
 		if (!found[idx])
-			fprintf(out, "%u %u %u\n", chip, line_map[idx], !values[idx]);
+			fprintf(out, "%u %u %u\n", req->chip_idx,
+				req->offsets[idx], !values[idx]);
 
 	fclose(in);
 	fclose(out);
