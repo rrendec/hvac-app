@@ -58,9 +58,11 @@ DEF_DUMMY_FREE(struct gpiod_chip_info *, gpiod_chip_info_free)
 
 DEF_DUMMY_ALLOC(struct gpiod_line_settings *, gpiod_line_settings_new, void)
 DEF_DUMMY_FREE(struct gpiod_line_settings *, gpiod_line_settings_free)
+DEF_DUMMY_FN_VOID(gpiod_line_settings_reset, struct gpiod_line_settings *settings)
 
 DEF_DUMMY_ALLOC(struct gpiod_line_config *, gpiod_line_config_new, void)
 DEF_DUMMY_FREE(struct gpiod_line_config *, gpiod_line_config_free)
+DEF_DUMMY_FN_VOID(gpiod_line_config_reset, struct gpiod_line_config *config)
 
 DEF_DUMMY_ALLOC(struct gpiod_request_config *, gpiod_request_config_new, void)
 DEF_DUMMY_FREE(struct gpiod_request_config *, gpiod_request_config_free)

@@ -76,7 +76,7 @@ struct sensor_data {
 	int valid;
 };
 
-enum gpio_pins {
+enum gpio_ctrl_pins {
 	GPIO_FURNACE_BLOW,
 	GPIO_FURNACE_HEAT,
 	GPIO_FURNACE_COOL,
@@ -88,7 +88,14 @@ enum gpio_pins {
 	GPIO_ERV_RECIRC,
 	GPIO_ERV_LOW,
 	GPIO_ERV_HIGH,
-	NUM_GPIO_PINS
+	NUM_GPIO_CTRL_PINS
+};
+
+enum gpio_sens_pins {
+	GPIO_FURNACE_POWER_24VAC,
+	GPIO_FURNACE_AIRFLOW_ON,
+	GPIO_FURNACE_AIRFLOW_OFF,
+	NUM_GPIO_SENS_PINS
 };
 
 struct ext_data {

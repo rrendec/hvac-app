@@ -1,9 +1,8 @@
-#ifndef __HVAC_BOARD_RPI_HVAC_H__
-#define __HVAC_BOARD_RPI_HVAC_H__
+#ifndef __HVAC_BOARD_RPI_1B_H__
+#define __HVAC_BOARD_RPI_1B_H__
 
-#define GPIO_CHIP_LABEL "pcf8575"
-
-#define GPIO_MAP_INITIALIZER {							\
+#define GPIO_CTRL_CHIP_LABEL "pcf8575"
+#define GPIO_CTRL_MAP_INITIALIZER {						\
 	[GPIO_FURNACE_BLOW]	= 0,	/* P00 */				\
 	[GPIO_FURNACE_HEAT]	= 1,	/* P01 */				\
 	[GPIO_FURNACE_COOL]	= 2,	/* P02 */				\
@@ -15,6 +14,13 @@
 	[GPIO_ERV_RECIRC]	= 9,	/* P11 */				\
 	[GPIO_ERV_LOW]		= 10,	/* P12 */				\
 	[GPIO_ERV_HIGH]		= 11,	/* P13 */				\
+}
+
+#define GPIO_SENS_CHIP_LABEL "pinctrl-bcm2835"
+#define GPIO_SENS_MAP_INITIALIZER {						\
+	[GPIO_FURNACE_POWER_24VAC]	= 4,	/* GPIO_GCLK */			\
+	[GPIO_FURNACE_AIRFLOW_ON]	= 7,	/* SPI_CE1_N */			\
+	[GPIO_FURNACE_AIRFLOW_OFF]	= 8,	/* SPI_CE0_N */			\
 }
 
 #endif

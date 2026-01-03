@@ -142,7 +142,8 @@ struct {
 	char label[20];
 	struct gpiod_chip *chip;
 } gpio_chip_map[2];
-struct gpiod_line_request *gpio_req;
+struct gpiod_line_request *gpio_ctrl_req;
+struct gpiod_line_request *gpio_sens_req;
 modbus_t *mb;
 /* end of hw handles */
 
@@ -336,9 +337,12 @@ struct gpiod_chip *gpio_chip_get_by_label(const char *label)
 	return chip;
 }
 
-void gpio_chip_close_all(void)
+void gpio_release_close(void)
 {
 	int i;
+
+	gpiod_line_request_release(gpio_ctrl_req);
+	gpiod_line_request_release(gpio_sens_req);
 
 	for (i = 0; i < ARRAY_SIZE(gpio_chip_map) && gpio_chip_map[i].chip; i++)
 		gpiod_chip_close(gpio_chip_map[i].chip);
@@ -346,7 +350,8 @@ void gpio_chip_close_all(void)
 
 int gpio_init(void)
 {
-	unsigned int pin_map[NUM_GPIO_PINS] = GPIO_MAP_INITIALIZER;
+	unsigned int ctrl_pin_map[NUM_GPIO_CTRL_PINS] = GPIO_CTRL_MAP_INITIALIZER;
+	unsigned int sens_pin_map[NUM_GPIO_SENS_PINS] = GPIO_SENS_MAP_INITIALIZER;
 	struct gpiod_chip *chip;
 	struct gpiod_line_settings *settings = NULL;
 	struct gpiod_line_config *line_cfg = NULL;
@@ -354,7 +359,7 @@ int gpio_init(void)
 	int ret = 0;
 	int rc;
 
-	chip = gpio_chip_get_by_label(GPIO_CHIP_LABEL);
+	chip = gpio_chip_get_by_label(GPIO_CTRL_CHIP_LABEL);
 	xassert(chip, {ret = errno; goto out_free;}, "%d", errno);
 
 	/* These are all unlikely to fail but we handle the error path anyway */
@@ -371,13 +376,28 @@ int gpio_init(void)
 	gpiod_line_settings_set_output_value(settings, GPIOD_LINE_VALUE_INACTIVE);
 
 	/* Note: gpiod_line_config_add_line_settings() *copies* the data from `settings`. */
-	rc = gpiod_line_config_add_line_settings(line_cfg, pin_map, NUM_GPIO_PINS, settings);
+	rc = gpiod_line_config_add_line_settings(line_cfg, ctrl_pin_map, ARRAY_SIZE(ctrl_pin_map), settings);
 	xassert(!rc, {ret = errno; goto out_free;}, "%d", errno);
 
 	/* Note: gpiod_chip_request_lines() *copies* the data from `req_cfg` and `line_cfg`. */
 	gpiod_request_config_set_consumer(req_cfg, "hvac");
-	gpio_req = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
-	xassert(gpio_req, ret = errno, "%d", errno);
+	gpio_ctrl_req = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+	xassert(gpio_ctrl_req, {ret = errno; goto out_free;}, "%d", errno);
+
+	chip = gpio_chip_get_by_label(GPIO_SENS_CHIP_LABEL);
+	xassert(chip, {ret = errno; goto out_free;}, "%d", errno);
+
+	/* These can only fail if we pass invalid values, which we don't */
+	gpiod_line_settings_reset(settings);
+	gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_INPUT);
+	gpiod_line_settings_set_active_low(settings, true);
+	gpiod_line_config_reset(line_cfg);
+
+	rc = gpiod_line_config_add_line_settings(line_cfg, sens_pin_map, ARRAY_SIZE(sens_pin_map), settings);
+	xassert(!rc, {ret = errno; goto out_free;}, "%d", errno);
+
+	gpio_sens_req = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+	xassert(gpio_sens_req, ret = errno, "%d", errno);
 
 out_free:
 	gpiod_request_config_free(req_cfg);
@@ -385,14 +405,14 @@ out_free:
 	gpiod_line_settings_free(settings);
 
 	if (ret)
-		gpio_chip_close_all();
+		gpio_release_close();
 
 	return ret;
 }
 
 void gpio_cleanup(void)
 {
-	enum gpiod_line_value values[NUM_GPIO_PINS] = {};
+	enum gpiod_line_value values[NUM_GPIO_CTRL_PINS] = {};
 	int rc;
 
 	/*
@@ -401,15 +421,14 @@ void gpio_cleanup(void)
 	 * has seen when all pins are released.
 	 */
 	values[GPIO_ERV_OFF] = GPIOD_LINE_VALUE_ACTIVE;
-	rc = gpiod_line_request_set_values(gpio_req, values);
+	rc = gpiod_line_request_set_values(gpio_ctrl_req, values);
 	xassert(!rc, NOOP, "%d", errno);
 	usleep(200000);
 	values[GPIO_ERV_OFF] = GPIOD_LINE_VALUE_INACTIVE;
-	rc = gpiod_line_request_set_values(gpio_req, values);
+	rc = gpiod_line_request_set_values(gpio_ctrl_req, values);
 	xassert(!rc, NOOP, "%d", errno);
 
-	gpiod_line_request_release(gpio_req);
-	gpio_chip_close_all();
+	gpio_release_close();
 }
 
 int modbus_init(void)
@@ -463,7 +482,7 @@ int sensors_once(void)
  */
 void gpio_state_sync(void)
 {
-	const enum gpiod_line_value values[NUM_GPIO_PINS] = {
+	const enum gpiod_line_value values[NUM_GPIO_CTRL_PINS] = {
 		[GPIO_FURNACE_BLOW]	= gs_cd.furnace_blow,
 		[GPIO_FURNACE_HEAT]	= gs_cd.furnace_heat,
 		[GPIO_FURNACE_COOL]	= gs_cd.furnace_cool,
@@ -476,7 +495,7 @@ void gpio_state_sync(void)
 		[GPIO_ERV_LOW]		= gs_cd.erv_low,
 		[GPIO_ERV_HIGH]		= gs_cd.erv_high,
 	};
-	int rc = gpiod_line_request_set_values(gpio_req, values);
+	int rc = gpiod_line_request_set_values(gpio_ctrl_req, values);
 
 	xassert(!rc, NOOP, "%d", errno);
 }
