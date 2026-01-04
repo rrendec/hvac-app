@@ -3,14 +3,8 @@
 # Use negative values as (POSIX) error numbers
 # to simulate read failures.
 
-# AW3485A: humidity
-1 0 437
+1 0 437		# AW3485A: humidity
+1 1 242		# AW3485A: temperature
 
-# AW3485A: temperature
-1 1 242
-
-# X-DUCER DTH: temperature
-2 34 232
-
-# X-DUCER DTH: humidity
-2 35 487
+2 34 232	# X-DUCER DTH: temperature
+2 35 487	# X-DUCER DTH: humidity

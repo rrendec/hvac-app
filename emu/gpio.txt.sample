@@ -1,34 +1,13 @@
 # chip_id line_offset value
 
-# P00: Furnace blow (G)
-1 0 1
-
-# P01: Furnace heat (W)
-1 1 1
-
-# P02: Furnace cool (Y)
-1 2 1
-
-# P04: Humidifier damper close
-1 4 1
-
-# P05: Humidifier damper open
-1 5 1
-
-# P06: Humidifier fan
-1 6 1
-
-# P07: Humidifier valve
-1 7 1
-
-# P08: ERV off
-1 8 1
-
-# P09: ERV recirculate
-1 9 1
-
-# P10: ERV low
-1 10 1
-
-# P11: ERV high
-1 11 1
+1 0 1	# P00: Furnace blow (G)
+1 1 1	# P01: Furnace heat (W)
+1 2 1	# P02: Furnace cool (Y)
+1 4 1	# P04: Humidifier damper close
+1 5 1	# P05: Humidifier damper open
+1 6 1	# P06: Humidifier fan
+1 7 1	# P07: Humidifier valve
+1 8 1	# P08: ERV off
+1 9 1	# P09: ERV recirculate
+1 10 1	# P10: ERV low
+1 11 1	# P11: ERV high

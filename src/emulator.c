@@ -144,11 +144,11 @@ int gpiod_line_request_set_values(struct gpiod_line_request *request,
 				  const enum gpiod_line_value *values)
 {
 	char tmp[PATH_MAX];
-	char buf[120], *p;
+	char buf[120];
 	unsigned long req_idx = (unsigned long)request - 1;
 	const typeof(req_map[0]) *req = &req_map[req_idx];
 	unsigned int xchip, xoffset, xvalue;
-	int fd = -1, idx, ret;
+	int fd = -1, idx, ret, len;
 	FILE *in = NULL, *out = NULL;
 	bool found[MAX_LINES] = {};
 
@@ -173,22 +173,12 @@ int gpiod_line_request_set_values(struct gpiod_line_request *request,
 	xassert(out, goto out_close, "%d", errno);
 
 	while (fgets(buf, sizeof(buf), in)) {
-		p = strchr(buf, '#');
-
-		if (p)
-			*p = '\0';
-
-		if (sscanf(buf, "%u %u %u", &xchip, &xoffset, &xvalue) == 3 &&
+		if (sscanf(buf, "%u %u %u%n", &xchip, &xoffset, &xvalue, &len) == 3 &&
 			xchip == req->chip_idx && (idx = find_offset(req, xoffset)) >= 0) {
-			fprintf(out, "%u %u %u\n", xchip, xoffset, !values[idx]);
+			fprintf(out, "%u %u %u%s", xchip, xoffset, !values[idx], &buf[len]);
 			found[idx] = true;
-			continue;
-		}
-
-		if (p)
-			*p = '#';
-
-		fputs(buf, out);
+		} else
+			fputs(buf, out);
 	}
 
 	for (idx = 0; idx < req->num_offsets; idx++)
@@ -250,7 +240,7 @@ int modbus_set_slave(modbus_t* ctx, int slave)
 
 static int modbus_read_one(int slave, int addr, uint16_t *dest)
 {
-	char buf[120], *p;
+	char buf[120];
 	int xslave, xaddr, xvalue;
 	int ret = EIO;
 	FILE *in = fopen(modbus_path, "r");
@@ -258,11 +248,6 @@ static int modbus_read_one(int slave, int addr, uint16_t *dest)
 	xassert(in, return errno, "%d", errno);
 
 	while (fgets(buf, sizeof(buf), in)) {
-		p = strchr(buf, '#');
-
-		if (p)
-			*p = '\0';
-
 		if (sscanf(buf, "%d %d %d", &xslave, &xaddr, &xvalue) != 3 ||
 		    xslave != slave || xaddr != addr)
 			continue;
